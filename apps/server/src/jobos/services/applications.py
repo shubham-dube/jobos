@@ -96,7 +96,7 @@ def attempt_context(s: Session, app_id: uuid.UUID) -> dict[str, Any]:
         "title": job.title, "countries": job.countries, "remote": job.remote_type == "remote",
         "site_key": site_key_for(job.ats, job.apply_url, board), "board_token": board,
         "match_score": match.score if match else None, "legitimacy": match.legitimacy if match else None,
-        "resume_document_id": str(doc.id) if doc else "", "resume_filename": doc.filename if doc else "",
+        "dry_run": bool(app.dry_run), "resume_document_id": str(doc.id) if doc else "", "resume_filename": doc.filename if doc else "",
     }
 
 

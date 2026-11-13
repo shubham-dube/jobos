@@ -158,6 +158,14 @@ def finish_step(ctx: dict[str, Any], state: str, pages: list[dict[str, Any]], pl
 
 
 @DBOS.step()
+def set_outcome_step(app_id: str, outcome: str) -> None:
+    with session_scope() as s:
+        app = s.get(Application, uuid.UUID(app_id))
+        if app is not None:
+            app.outcome = outcome
+
+
+@DBOS.step()
 def file_specs_step(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     if not ctx.get("resume_document_id"):
         return []
@@ -228,6 +236,13 @@ def application_workflow(app_id: str) -> str:
 
     # 3. gate + review -----------------------------------------------------------------------------
     gate = gate_step(ctx, plans, results)
+    if ctx.get("dry_run"):
+        # Dry run (testing / drift canary): everything except the final click.
+        finish_step(ctx, AppState.skipped.value, pages, plans, nav_labels,
+                    {"dry_run": True, "gate": gate, "outcome": "dry_run_complete"})
+        set_outcome_step(app_id, "dry_run_complete")
+        fire_runner(ctr, cid, "close", TaskType.close_session, session, {})
+        return "dry_run_complete"
     if not gate["ok"]:
         return fail("submit gate blocked: " + "; ".join(gate["problems"][:5]))
     if gate["action"] != "auto_submit":

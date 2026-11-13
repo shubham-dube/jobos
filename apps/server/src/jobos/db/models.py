@@ -201,6 +201,7 @@ class Application(Base):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     outcome: Mapped[str] = mapped_column(String(30), default="")
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # stop before submit
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

@@ -262,6 +262,7 @@ def feedback(match_id: str, body: FeedbackIn, auth: AuthContext = Depends(owner)
 
 class ApplyIn(BaseModel):
     document_id: str | None = None
+    dry_run: bool = False  # fill everything, run the gate, never submit
 
 
 @router.post("/jobs/{job_id}/apply")
@@ -274,6 +275,8 @@ def apply(job_id: str, body: ApplyIn | None = None, auth: AuthContext = Depends(
         raise HTTPException(409, str(exc)) from exc
     if body and body.document_id:
         app.document_id = _uuid(body.document_id)
+    if body:
+        app.dry_run = body.dry_run
     job = s.get(Job, app.job_id)
     s.commit()
     _enqueue(str(app.id), job.company_name if job else "")
@@ -319,7 +322,7 @@ def list_applications(state: str = "", limit: int = 200, auth: AuthContext = Dep
     rows = s.execute(stmt.order_by(Application.updated_at.desc()).limit(min(limit, 1000))).all()
     return [{"id": str(a.id), "state": a.state, "title": j.title, "company": j.company_name, "ats": j.ats,
              "apply_url": j.apply_url, "attempt": a.attempt, "error": a.error, "submitted_at": a.submitted_at,
-             "updated_at": a.updated_at, "gate": a.gate} for a, j in rows]
+             "updated_at": a.updated_at, "gate": a.gate, "dry_run": a.dry_run, "outcome": a.outcome} for a, j in rows]
 
 
 @router.get("/applications/{app_id}")
@@ -334,6 +337,7 @@ def application_detail(app_id: str, auth: AuthContext = Depends(owner), s: Sessi
     emails = s.scalars(select(EmailMessage).where(EmailMessage.application_id == a.id))
     return {
         "id": str(a.id), "state": a.state, "attempt": a.attempt, "error": a.error, "gate": a.gate,
+        "dry_run": a.dry_run, "outcome": a.outcome,
         "submitted_at": a.submitted_at, "llm_cost_usd": float(cost or 0),
         "job": {"id": str(j.id), "title": j.title, "company": j.company_name, "url": j.apply_url} if j else None,
         "events": [{"from": e.from_state, "to": e.to_state, "actor": e.actor, "data": e.data, "at": e.at} for e in events],
