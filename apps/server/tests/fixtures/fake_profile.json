@@ -1,0 +1,49 @@
+{
+  "basics": {
+    "first_name": "Aarav", "last_name": "Mehta", "preferred_name": "Aarav",
+    "email": "aarav.mehta@example.com",
+    "phone": {"country_code": "+91", "number": "9000000001"},
+    "location": {"city": "Bengaluru", "region": "Karnataka", "country": "IN", "postal_code": "560001"},
+    "links": {"linkedin": "https://www.linkedin.com/in/aarav-mehta-example", "github": "https://github.com/aarav-example", "portfolio": "https://aarav.example.com"},
+    "headline": "Backend & AI engineer (new grad 2027)",
+    "summary": "CS undergraduate who has shipped production backends and LLM features during internships."
+  },
+  "work": [
+    {"id": "w1", "company": "Acme Labs", "title": "Software Engineering Intern", "start": "2026-06", "end": null, "current": true,
+     "location": "Remote", "employment_type": "internship", "remote": true,
+     "highlights": [
+       {"id": "w1h1", "text": "Built a FastAPI service that processes 50k documents per day with PostgreSQL and Redis.", "skills": ["Python", "FastAPI", "PostgreSQL", "Redis"]},
+       {"id": "w1h2", "text": "Shipped an LLM-powered summarization feature used by 3 internal teams.", "skills": ["LLM", "Python"]}
+     ], "skills": ["Python", "FastAPI", "PostgreSQL"], "priority": 1},
+    {"id": "w2", "company": "Beta Apps", "title": "Flutter Developer Intern", "start": "2025-01", "end": "2025-12",
+     "location": "Remote", "employment_type": "internship",
+     "highlights": [{"id": "w2h1", "text": "Built two Flutter apps published on Google Play using BLoC.", "skills": ["Flutter", "Dart"]}],
+     "skills": ["Flutter", "Dart"]}
+  ],
+  "education": [
+    {"id": "e1", "institution": "Example Institute of Technology", "degree": "B.Tech", "field": "Computer Science and Engineering",
+     "start": "2023-08", "end": "2027-05", "grade": "8.1/10", "expected": true}
+  ],
+  "projects": [
+    {"id": "p1", "name": "DocChat", "summary": "RAG chatbot over company documents.", "skills": ["Python", "LangChain", "FAISS"],
+     "highlights": [{"id": "p1h1", "text": "Implemented retrieval with FAISS and hybrid search.", "skills": ["FAISS"]}]}
+  ],
+  "skills": [
+    {"name": "Python", "level": "strong"}, {"name": "FastAPI", "level": "strong"}, {"name": "PostgreSQL", "level": "proficient"},
+    {"name": "Flutter", "level": "proficient"}, {"name": "TypeScript", "level": "proficient"}, {"name": "React", "level": "working_knowledge"},
+    {"name": "Kubernetes", "level": "read_about", "stretch": true}
+  ],
+  "awards": [{"id": "a1", "title": "Winner, Example Hackathon 2025"}],
+  "languages": [{"name": "English", "proficiency": "professional"}, {"name": "Hindi", "proficiency": "native"}],
+  "work_authorization": [
+    {"country": "IN", "status": "citizen", "needs_sponsorship": false},
+    {"country": "*", "status": "none", "needs_sponsorship": true}
+  ],
+  "preferences": {
+    "notice_period_days": 30, "earliest_start_date": "2027-06-01",
+    "expected_compensation": {"amount": 1800000, "currency": "INR", "period": "year"},
+    "willing_to_relocate": true, "relocation_countries": [], "work_modes": ["remote", "hybrid", "onsite"],
+    "target_roles": ["Software Engineer", "Backend Engineer", "AI Engineer", "Flutter Developer"]
+  },
+  "facts": [{"id": "f1", "text": "Solved 300+ LeetCode problems."}]
+}
