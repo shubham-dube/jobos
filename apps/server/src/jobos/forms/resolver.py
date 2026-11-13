@@ -213,9 +213,8 @@ def _apply_resolution(rc: ResolveContext, res: Resolution, pending: list[tuple[F
                     problem = f"value {value!r} is not one of the options"
                 else:
                     value = _coerce_choice(f, value)
-            if not problem and r.source == "answer_bank":
-                if r.answer_id not in {c.id for c in cands}:
-                    problem = "cited an unknown previous answer"
+            if not problem and r.source == "answer_bank" and r.answer_id not in {c.id for c in cands}:
+                problem = "cited an unknown previous answer"
             if not problem and r.source == "generated":
                 if not r.fact_ids or any(fid not in facts for fid in r.fact_ids):
                     problem = "generated text without valid fact citations"

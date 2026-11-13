@@ -27,6 +27,7 @@ known-first-party = ["jobos", "jobos_common", "jobos_runner"]
 [tool.pytest.ini_options]
 testpaths = ["packages/common/tests", "apps/server/tests", "apps/runner/tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra"
 markers = [
   "live: hits real external services (LLM / job boards); skipped unless JOBOS_LIVE_TESTS=1",

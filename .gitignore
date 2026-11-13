@@ -34,3 +34,8 @@ test-results/
 
 # personal data (never commit)
 .private/
+
+# local runtime data (documents, evidence screenshots)
+data/
+apps/server/data/
+*.tsbuildinfo
