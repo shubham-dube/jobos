@@ -5,6 +5,15 @@ Status: Approved — matches the code on `feat/core-pipeline`.
 You run three things: **Postgres**, the **JobOS server** (API + agents/workflows), and the **runner** (drives a dedicated
 Chrome profile). The **dashboard** is a Next.js app. Everything stays on your computer.
 
+## 0. Fast path (Windows)
+```powershell
+git clone https://github.com/shubham-dube/jobos.git; cd jobos
+powershell -ExecutionPolicy Bypass -File scripts\windows\setup.ps1   # installs tools, creates .env, builds, migrates
+notepad .env                                                            # add JOBOS_OPENROUTER_API_KEY (+ Resend)
+powershell -ExecutionPolicy Bypass -File scripts\windows\start.ps1   # server, dashboard, runner
+```
+The steps below are what those scripts do.
+
 ## 1. One-time install (Windows 11, PowerShell)
 
 ```powershell

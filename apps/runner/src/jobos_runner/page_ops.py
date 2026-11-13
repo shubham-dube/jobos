@@ -112,11 +112,25 @@ class PageOps:
             data = await self.page.screenshot(type="jpeg", quality=45, full_page=False)
         return Artifact(name=name, content_type="image/jpeg", data_b64=base64.b64encode(data).decode())
 
-    async def settle(self, timeout_ms: int = 8000) -> None:
+    async def settle(self, timeout_ms: int = 8000, stable_s: float = 12.0) -> None:
+        """Wait for load, then until the DOM stops changing (SPAs like Workday render late)."""
         with contextlib.suppress(Exception):
             await self.page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
         with contextlib.suppress(Exception):
             await self.page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        probe = ("() => [document.body ? document.body.innerText.length : 0, "
+                 "document.querySelectorAll('input,select,textarea,button,a').length]")
+        last = None
+        deadline = asyncio.get_running_loop().time() + stable_s
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                snap = await self.page.evaluate(probe)
+            except Exception:
+                snap = None
+            if snap is not None and snap == last and snap[1] > 0:
+                return
+            last = snap
+            await asyncio.sleep(0.7)
 
     async def dismiss_banners(self) -> None:
         """Close cookie/consent banners that block clicks (accepting only necessary where offered)."""
@@ -438,6 +452,7 @@ class PageOps:
             await self.settle()
         elif action.kind == "wait":
             await asyncio.sleep(2)
+            await self.settle(5000, 8.0)
 
 
 def _value_matches(field: FormField, fv: FillValue) -> bool:

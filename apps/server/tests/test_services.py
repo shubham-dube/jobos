@@ -96,7 +96,8 @@ def test_workday_smartrecruiters_workable_sources_and_hydration() -> None:
                                                                   "country": {"descriptor": "India"}}}))
     wd = WorkdaySource().fetch(tok, "Acme")
     assert wd[0].countries == ["IN"] and wd[0].raw["needs_hydrate"]
-    assert wd[0].apply_url == "https://acme.wd5.myworkdayjobs.com/External/job/India-Bengaluru/Software-Engineer_JR1/apply"
+    assert wd[0].apply_url == ("https://acme.wd5.myworkdayjobs.com/External/job/India-Bengaluru/Software-Engineer_JR1"
+                               "/apply/autofillWithResume")
     assert WorkdaySource().hydrate(tok, wd[0].raw)["description_text"] == "Build APIs"
 
     respx.get("https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=0").mock(return_value=httpx.Response(200, json={

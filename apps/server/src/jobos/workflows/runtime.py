@@ -28,8 +28,10 @@ def launch(run_schedules: bool = True) -> DBOS:
     config: DBOSConfig = {"name": "jobos", "system_database_url": system_db_url(), "log_level": "INFO"}
     _dbos = DBOS(config=config)
     DBOS.launch()
-    DBOS.register_queue(APPLY_QUEUE, worker_concurrency=get_settings().apply_concurrency, partition_concurrency=1)
-    DBOS.register_queue(DISCOVERY_QUEUE, worker_concurrency=1)
+    # always_update: config in code/env is the source of truth (DBOS persists queue config in Postgres)
+    DBOS.register_queue(APPLY_QUEUE, worker_concurrency=get_settings().apply_concurrency, partition_concurrency=1,
+                        on_conflict="always_update")
+    DBOS.register_queue(DISCOVERY_QUEUE, worker_concurrency=1, on_conflict="always_update")
     if run_schedules:
         from .discovery import discovery_tick
         from .inbox import inbox_tick

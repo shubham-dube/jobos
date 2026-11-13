@@ -308,7 +308,9 @@ class WorkdaySource:
                 jobs.append(NormalizedJob(
                     source="workday", source_job_id=f"{tenant}:{req}", company_name=company_name,
                     board_token=board_token, url=f"https://{host}/{site}{path}",
-                    apply_url=f"https://{host}/{site}{path}/apply", ats="workday", title=(p.get("title") or "").strip(),
+                    # "Autofill with Resume": Workday parses the resume into work history (no repeating sections)
+                    apply_url=f"https://{host}/{site}{path}/apply/autofillWithResume", ats="workday",
+                    title=(p.get("title") or "").strip(),
                     locations=[loc] if loc else [], countries=countries, remote_type=remote,
                     posted_at=_workday_posted(p.get("postedOn", "")), raw={"path": path, "needs_hydrate": True},
                 ))

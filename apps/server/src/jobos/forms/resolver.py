@@ -223,8 +223,10 @@ def _apply_resolution(rc: ResolveContext, res: Resolution, pending: list[tuple[F
                     problem = "generated text without valid fact citations"
                 if f.max_length and isinstance(value, str) and len(value) > f.max_length:
                     value = value[: f.max_length]
+            short_derived = isinstance(value, str) and value.strip().lower() in {
+                "yes", "no", "true", "false", "n/a", "na", "none", "not applicable"}
             if not problem and r.source == "profile" and not r.fact_ids and isinstance(value, str) \
-                    and f.type not in CHOICE_TYPES and value.lower() not in profile_text:
+                    and f.type not in CHOICE_TYPES and not short_derived and value.lower() not in profile_text:
                 problem = "value not found in profile"
             # AI-written text is judged on grounding (valid citations), not on the model's self-rated confidence;
             # it is always flagged as generated and shown at review.
