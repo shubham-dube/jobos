@@ -45,7 +45,7 @@ export async function answerIntervention(form: FormData) {
   const id = str(form, "id");
   const kind = str(form, "kind");
   let body: Record<string, unknown> = {};
-  if (kind === "review_before_submit") body = { decision: str(form, "decision") };
+  if (kind === "review_before_submit" || kind === "account_creation_consent") body = { decision: str(form, "decision") };
   else if (kind === "missing_answer") {
     const answers: Record<string, unknown> = {};
     const remember: Record<string, string> = {};

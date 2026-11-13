@@ -130,7 +130,21 @@ class RunnerAgent:
 
         if task.type == TaskType.open_page:
             body = OpenPagePayload.model_validate(p)
-            await page.goto(body.url, wait_until="domcontentloaded", timeout=60000)
+            status = None
+            for attempt in range(3):  # transient network errors (proxy/tunnel resets, DNS hiccups)
+                try:
+                    resp = await page.goto(body.url, wait_until="domcontentloaded", timeout=60000)
+                    status = resp.status if resp else None
+                    break
+                except Exception as exc:
+                    if attempt == 2 or "net::ERR" not in str(exc):
+                        return TaskResult(ok=False, error=str(exc)[:500], error_kind=ErrorKind.retryable)
+                    await asyncio.sleep(3 * (attempt + 1))
+            if "error=true" in page.url and "greenhouse.io" in page.url:
+                return TaskResult(ok=False, error="job closed (board redirected with error)", error_kind=ErrorKind.not_found)
+            if status == 404:
+                return TaskResult(ok=False, error="page not found (HTTP 404)", error_kind=ErrorKind.not_found,
+                                  artifacts=[await ops.screenshot("404")])
             await ops.settle()
             await ops.dismiss_banners()
             fp = await ops.extract()
@@ -163,6 +177,21 @@ class RunnerAgent:
             await ops.act(body.action, body.allowed_hosts)
             fp = await ops.extract()
             return TaskResult(ok=True, data={"page": fp.model_dump(mode="json")})
+        if task.type == TaskType.auth:
+            from jobos_common.runner import AuthPayload
+
+            from .page_ops import auth_flow
+
+            body = AuthPayload.model_validate(p)
+            password = ""
+            if body.account_ref:  # fetch the secret only now, never persisted on the runner
+                r = await self.http.get(f"/runner/v1/secrets/{body.account_ref}")
+                r.raise_for_status()
+                password = r.json()["password"]
+            out = await auth_flow(ops, body.method, body.email, password, body.google_account)
+            return TaskResult(ok=True, data={"page": out["page"].model_dump(mode="json"),
+                                             "verify_email": out["verify_email"]},
+                              artifacts=[await ops.screenshot("auth")])
         if task.type == TaskType.check_session:
             body = CheckSessionPayload.model_validate(p)
             await page.goto(body.url, wait_until="domcontentloaded", timeout=45000)

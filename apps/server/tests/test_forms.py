@@ -105,3 +105,19 @@ def test_llm_routing_precedence() -> None:
     assert g.route("form.resolve")[1] == "cheap"
     assert g.route("form.generate")[1] == "best"
     assert g.route("job.match")[1] == "anthropic/claude-haiku-5.5"
+
+
+def test_name_variants() -> None:
+    p = PROFILE.model_copy(deep=True)
+    p.basics.middle_name, p.basics.preferred_name = "Kumar", "Aarav Mehta"
+    ctx = Ctx(profile=p)
+    assert map_field(ctx, f("a", "Legal First and Last Name")).value == "Aarav Kumar Mehta"
+    assert map_field(ctx, f("b", "Preferred First Name")).value == "Aarav"
+    assert map_field(ctx, f("c", "Preferred Last Name")).value == "Mehta"
+
+
+def test_truncated_searchable_list_accepts_profile_value() -> None:
+    ctx = Ctx(profile=PROFILE)
+    field = f("s", "School", FieldType.select, [f"University {i}" for i in range(300)])
+    field.locator["truncated"] = True
+    assert map_field(ctx, field).value == "Example Institute of Technology"

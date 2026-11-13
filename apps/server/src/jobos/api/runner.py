@@ -69,6 +69,19 @@ def task_result(task_id: uuid.UUID, body: TaskResult, runner: Runner = Depends(r
     return {"accepted": True}
 
 
+@router.get("/secrets/{account_id}")
+def account_secret(account_id: uuid.UUID, runner: Runner = Depends(runner_auth), s: Session = Depends(db)) -> dict:
+    """Vault read for the runner that is about to sign in. Candidate-scoped and audited."""
+    from jobos.db.models import AuditLog, SiteAccount
+    from jobos.services.secrets import decrypt
+
+    acct = s.get(SiteAccount, account_id)
+    if acct is None or acct.candidate_id != runner.candidate_id:
+        raise HTTPException(404)
+    s.add(AuditLog(actor=f"runner:{runner.id}", action="vault.read", target=acct.site_key))
+    return {"username": acct.username, "password": decrypt(acct.secret_enc)}
+
+
 @router.get("/files/{doc_id}")
 def file(doc_id: uuid.UUID, runner: Runner = Depends(runner_auth), s: Session = Depends(db)) -> FileResponse:
     d = s.get(Document, doc_id)

@@ -62,7 +62,11 @@ def _summary(iv: Intervention) -> tuple[str, list[tuple[str, str]]]:
         gen = p.get("gate", {}).get("facts", {}).get("generated_fields", 0)
         return (f"{head}\nReady to submit: {n} fields filled, {gen} written by AI. Match {p.get('match_score', '?')}.",
                 [(f"iv:{iv.id}:approve", "Approve & submit"), (f"iv:{iv.id}:reject", "Skip job")])
-    if iv.kind in ("login_required", "captcha", "blocked"):
+    if iv.kind == "account_creation_consent":
+        return (f"{head}\n{p.get('message', '')}",
+                [(f"iv:{iv.id}:approve", "Create account"), (f"iv:{iv.id}:always", "Always allow"),
+                 (f"iv:{iv.id}:reject", "No")])
+    if iv.kind in ("login_required", "captcha", "blocked", "verify_email"):
         return (f"{head}\n{p.get('message', 'Please complete this step in the JobOS browser window on your computer.')}",
                 [(f"iv:{iv.id}:done", "Done")])
     return head or iv.title, []
@@ -91,6 +95,9 @@ def answer_from_reply(s: Session, reply_id: str, text: str = "") -> Intervention
         return None
     if iv.kind == "review_before_submit":
         return answer_intervention(s, iv_id, {"decision": "approve" if choice == "approve" else "reject"}, "whatsapp")
+    if iv.kind == "account_creation_consent":
+        return answer_intervention(s, iv_id, {"decision": choice if choice in ("approve", "always") else "reject"},
+                                   "whatsapp")
     if iv.kind == "missing_answer":
         q = (iv.payload.get("questions") or [{}])[0]
         opts = q.get("options") or []

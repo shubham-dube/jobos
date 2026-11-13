@@ -28,6 +28,7 @@ class TaskType(StrEnum):
     check_session = "check_session"  # is the user logged in on a site?
     close_session = "close_session"
     fetch_text = "fetch_text"  # load a URL and return visible text (career pages, webmail)
+    auth = "auth"  # get past a sign-in wall: Google SSO, sign in, or create an account
 
 
 class ErrorKind(StrEnum):
@@ -97,6 +98,15 @@ class NavAction(BaseModel):
 class ActPayload(BaseModel):
     action: NavAction
     allowed_hosts: list[str] = Field(default_factory=list)
+
+
+class AuthPayload(BaseModel):
+    method: str  # google | login | create
+    email: str = ""
+    # The password itself never travels in task payloads or workflow history: the runner fetches it with
+    # GET /runner/v1/secrets/{account_ref} at the moment it types it.
+    account_ref: str = ""
+    google_account: str = ""  # which Google account to pick in the chooser (default: first)
 
 
 class CheckSessionPayload(BaseModel):

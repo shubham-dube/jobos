@@ -167,7 +167,10 @@ def _llm_resolve(gateway: LLMGateway, rc: ResolveContext, pending: list[tuple[Fo
         item: dict[str, Any] = {"key": f.key, "label": f.label, "type": f.type.value, "required": f.required}
         if f.options:
             item["options"] = _trim_options(f.options, terms)
-            if len(item["options"]) < len(f.options):
+            if f.locator.get("truncated"):
+                item["options_note"] = ("searchable list, only partly shown: answer with the exact name you need "
+                                        "(e.g. the candidate's institution); the site will search for it")
+            elif len(item["options"]) < len(f.options):
                 item["options_note"] = f"showing {len(item['options'])} of {len(f.options)} options most relevant to the candidate"
         if f.description:
             item["help"] = f.description[:300]
@@ -223,7 +226,10 @@ def _apply_resolution(rc: ResolveContext, res: Resolution, pending: list[tuple[F
             if not problem and r.source == "profile" and not r.fact_ids and isinstance(value, str) \
                     and f.type not in CHOICE_TYPES and value.lower() not in profile_text:
                 problem = "value not found in profile"
-            if not problem and r.confidence < rc.min_confidence:
+            # AI-written text is judged on grounding (valid citations), not on the model's self-rated confidence;
+            # it is always flagged as generated and shown at review.
+            floor = min(rc.min_confidence, 0.6) if r.source == "generated" else rc.min_confidence
+            if not problem and r.confidence < floor:
                 problem = f"low confidence ({r.confidence:.2f})"
         if r.action == "ask" or problem:
             if f.required or r.action == "ask":
@@ -247,6 +253,8 @@ def _norm(v: Any) -> str:
 def _valid_choice(f: FormField, value: Any) -> bool:
     if value is None:
         return False
+    if f.locator.get("truncated"):  # searchable long list: the runner searches for the value
+        return isinstance(value, str) and bool(value.strip())
     if not f.options:
         return f.type not in CHOICE_TYPES or isinstance(value, (str, bool))
     values = value if isinstance(value, list) else [value]

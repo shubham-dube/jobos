@@ -109,12 +109,20 @@ class Thresholds(BaseModel):
     auto_answer_confidence: float = 0.8  # answer-bank reuse threshold
 
 
+class AccountSettings(BaseModel):
+    use_google_sso: bool = True  # prefer "Sign in with Google" when a site offers it
+    google_account: str = ""  # account to choose in Google's chooser (empty = first listed)
+    account_creation: str = "ask"  # ask | always | never  (per-employer accounts, e.g. Workday)
+    account_email: str = ""  # email for new accounts (default: profile email)
+
+
 class CandidateSettings(BaseModel):
     approval_rules: list[ApprovalRule] = Field(default_factory=list)  # empty => review everything
     pacing: Pacing = Field(default_factory=Pacing)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     platform_native_enabled: list[str] = Field(default_factory=list)  # e.g. ["linkedin", "naukri"]
     notify_channels: list[str] = Field(default_factory=lambda: ["email", "whatsapp"])
+    accounts: AccountSettings = Field(default_factory=AccountSettings)
 
 
 class SearchFilters(BaseModel):

@@ -88,6 +88,17 @@ def _full_name(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
     return (f"{b.first_name} {b.last_name}".strip(), "basics.full_name") if b.first_name else None
 
 
+def _legal_name(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
+    b = _p(ctx).basics
+    return (b.full_name, "basics.legal_name") if b.first_name else None
+
+
+def _preferred_first(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
+    b = _p(ctx).basics
+    first = (b.preferred_name or b.first_name).split()[0] if (b.preferred_name or b.first_name) else ""
+    return (first, "basics.preferred_name") if first else None
+
+
 def _company(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
     w = _current_work(ctx)
     return (w.company, f"work.{w.id}") if w else None
@@ -126,7 +137,11 @@ def _resume(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
 RULES: list[tuple[re.Pattern[str], set[FieldType] | None, Getter]] = [
     (re.compile(r"^(legal )?first name|^given name|^first$", re.I), None, _basic("first_name")),
     (re.compile(r"^(legal )?last name|^surname|^family name|^last$", re.I), None, _basic("last_name")),
-    (re.compile(r"^preferred (first )?name", re.I), None, _basic("preferred_name")),
+    (re.compile(r"^legal (first and last |full )?name|^full legal name|^name \(as (on|in) (your )?(passport|id)\)", re.I),
+     {FieldType.text}, _legal_name),
+    (re.compile(r"^preferred first name", re.I), None, _preferred_first),
+    (re.compile(r"^preferred last name", re.I), None, _basic("last_name")),
+    (re.compile(r"^preferred (full )?name", re.I), None, _basic("preferred_name")),
     (re.compile(r"^(full )?name$|^full name|^your name", re.I), None, _full_name),
     (re.compile(r"e-?mail", re.I), {FieldType.email, FieldType.text}, _basic("email")),
     (re.compile(r"phone|mobile|contact number", re.I), {FieldType.phone, FieldType.text, FieldType.number}, _phone),
@@ -170,6 +185,8 @@ def map_field(ctx: Ctx, f: FormField) -> FillValue | None:
                 exact = [o for o in f.options if o.lower() == str(value).lower()]
                 starts = [o for o in f.options if o.lower().startswith(str(value).lower())]
                 choice = (exact or starts or get_close_matches(str(value), f.options, n=1, cutoff=0.8) or [None])[0]
+                if choice is None and f.locator.get("truncated"):
+                    choice = str(value)  # long searchable list: the runner types it to search
                 if choice is None:
                     return None
                 value = choice

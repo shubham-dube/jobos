@@ -86,7 +86,19 @@ export default async function InterventionPage({ params }: { params: Promise<{ i
         </div>
       )}
 
-      {!closed && !["missing_answer", "review_before_submit"].includes(iv.kind) && (
+      {!closed && iv.kind === "account_creation_consent" && (
+        <form action={answerIntervention} className="card space-y-3">
+          <input type="hidden" name="id" value={iv.id} /><input type="hidden" name="kind" value={iv.kind} />
+          <p className="text-sm">{iv.payload.message}</p>
+          <div className="flex gap-2">
+            <button name="decision" value="approve" className="btn">Create account</button>
+            <button name="decision" value="always" className="btn-secondary">Always allow</button>
+            <button name="decision" value="reject" className="btn-secondary">No</button>
+          </div>
+        </form>
+      )}
+
+      {!closed && !["missing_answer", "review_before_submit", "account_creation_consent"].includes(iv.kind) && (
         <form action={answerIntervention} className="card space-y-3">
           <input type="hidden" name="id" value={iv.id} /><input type="hidden" name="kind" value={iv.kind} />
           <p className="text-sm">{iv.payload.message}</p>

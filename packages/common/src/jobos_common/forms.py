@@ -57,6 +57,10 @@ class ButtonKind(StrEnum):
     apply = "apply"  # opens the application form
     next = "next"
     submit = "submit"
+    sso_google = "sso_google"  # "Sign in with Google" / "Continue with Google"
+    email_signin = "email_signin"  # "Sign in with email" (reveals email/password fields)
+    create_account = "create_account"  # "Create account" / "Sign up" link or button
+    signin = "signin"  # "Sign in" / "Log in" submit
     other = "other"
 
 

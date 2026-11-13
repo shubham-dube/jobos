@@ -160,6 +160,84 @@ def finish_step(ctx: dict[str, Any], state: str, pages: list[dict[str, Any]], pl
 
 
 @DBOS.step()
+def auth_plan_step(ctx: dict[str, Any], page: dict[str, Any], tried: list[str]) -> dict[str, Any]:
+    from urllib.parse import urlparse
+
+    from sqlalchemy import select
+
+    from jobos.db.models import SiteAccount
+
+    kinds = {b["kind"] for b in page.get("buttons", [])}
+    host = (urlparse(page.get("url", "")).hostname or "").lower()
+    site_key = f"account:{host}"
+    with session_scope() as s:
+        cand_id = uuid.UUID(ctx["candidate_id"])
+        acc = get_candidate_settings(s, cand_id).accounts
+        email = acc.account_email or get_profile(s, cand_id).basics.email
+        if "sso_google" in kinds and acc.use_google_sso and "google" not in tried:
+            return {"method": "google", "google_account": acc.google_account}
+        existing = s.scalar(select(SiteAccount).where(SiteAccount.candidate_id == cand_id,
+                                                      SiteAccount.site_key == site_key))
+        if existing and "login" not in tried:
+            return {"method": "login", "email": existing.username, "account_ref": str(existing.id)}
+        if not existing and "create" not in tried and (kinds & {"create_account", "email_signin"}) \
+                and acc.account_creation != "never":
+            label = "Workday" if "myworkday" in host else host
+            return {"method": "create", "email": email, "site_key": site_key, "site_label": label,
+                    "needs_consent": acc.account_creation == "ask"}
+    return {"method": "manual"}
+
+
+@DBOS.step()
+def create_account_step(candidate_id: str, site_key: str, email: str) -> str:
+    """Create (or reuse) a vault entry with a strong generated password. Returns the account id."""
+    import secrets as pysecrets
+    import string
+
+    from sqlalchemy import select
+
+    from jobos.db.models import AuditLog, SiteAccount
+    from jobos.services.secrets import encrypt
+
+    with session_scope() as s:
+        cand_id = uuid.UUID(candidate_id)
+        acct = s.scalar(select(SiteAccount).where(SiteAccount.candidate_id == cand_id, SiteAccount.site_key == site_key))
+        if acct is None:
+            # meets typical ATS rules: upper, lower, digit, special, length >= 8
+            alphabet = string.ascii_letters + string.digits
+            core = "".join(pysecrets.choice(alphabet) for _ in range(14))
+            password = (pysecrets.choice(string.ascii_uppercase) + pysecrets.choice(string.ascii_lowercase)
+                        + pysecrets.choice(string.digits) + pysecrets.choice("!@#$%&*") + core)
+            acct = SiteAccount(candidate_id=cand_id, site_key=site_key, username=email, secret_enc=encrypt(password))
+            s.add(acct)
+            s.flush()
+            s.add(AuditLog(actor="agent", action="account.create", target=site_key))
+        return str(acct.id)
+
+
+@DBOS.step()
+def account_status_step(account_id: str, ok: bool) -> None:
+    from jobos.db.models import SiteAccount
+
+    with session_scope() as s:
+        acct = s.get(SiteAccount, uuid.UUID(account_id))
+        if acct:
+            acct.status = "verified" if ok else "failed"
+            if ok:
+                acct.last_login_at = datetime.now(UTC)
+
+
+@DBOS.step()
+def allow_account_creation_step(candidate_id: str) -> None:
+    with session_scope() as s:
+        from jobos.services.candidates import save_candidate_settings
+
+        st = get_candidate_settings(s, uuid.UUID(candidate_id))
+        st.accounts.account_creation = "always"
+        save_candidate_settings(s, uuid.UUID(candidate_id), st)
+
+
+@DBOS.step()
 def set_outcome_step(app_id: str, outcome: str) -> None:
     with session_scope() as s:
         app = s.get(Application, uuid.UUID(app_id))
@@ -201,8 +279,16 @@ def application_workflow(app_id: str) -> str:
         return f"{state}: {reason}"
 
     # 1. open and reach the form ------------------------------------------------------------------
-    res = runner("open", TaskType.open_page, {"url": ctx["apply_url"]})
+    res: dict[str, Any] = {}
+    for attempt in range(3):
+        res = runner(f"open-{attempt}", TaskType.open_page, {"url": ctx["apply_url"]})
+        if res.get("ok") or res.get("error_kind") != "retryable":
+            break
+        DBOS.sleep(60 * (attempt + 1))  # durable back-off before retrying a transient failure
     if not res.get("ok"):
+        if res.get("error_kind") == "not_found":
+            return fail("posting page not available (HTTP 404); the employer may only accept applications on "
+                        "its own careers site")
         return fail(f"could not open page: {res.get('error')}")
     record_page_step(ctx, res["data"]["page"], None, None, res.get("artifacts", []))
     page = res["data"]["page"]
@@ -303,6 +389,7 @@ def _job(ctx: dict[str, Any]) -> dict[str, Any]:
 def _reach_form(ctx, ctr, runner, page) -> tuple[dict[str, Any], list[str], str]:
     """Get from whatever page we landed on to the application form."""
     nav_labels: list[str] = []
+    auth_tried: list[str] = []
     recipe_nav = list(ctx.get("recipe_nav") or [])
     for _step in range(MAX_NAV_STEPS):
         kind = page.get("kind")
@@ -310,6 +397,11 @@ def _reach_form(ctx, ctr, runner, page) -> tuple[dict[str, Any], list[str], str]
             return page, nav_labels, ""
         if kind == "closed":
             return page, nav_labels, "job closed / no longer accepting applications"
+        if kind == "login" and len(auth_tried) < 4:
+            page, done_note = _authenticate(ctx, ctr, runner, page, auth_tried)
+            if done_note == "dry_run_stop":
+                return page, nav_labels, "dry run stopped at account creation (no account was created)"
+            continue
         if kind in ("login", "captcha"):
             ans = ask_human(ctr, ctx["candidate_id"], ctx["application_id"],
                             "login_required" if kind == "login" else "captcha",
@@ -345,6 +437,56 @@ def _reach_form(ctx, ctr, runner, page) -> tuple[dict[str, Any], list[str], str]
         if label:
             nav_labels.append(label)
     return page, nav_labels, "could not reach the application form"
+
+
+def _authenticate(ctx, ctr, runner, page, tried: list[str]) -> tuple[dict[str, Any], str]:
+    """Sign-in wall: Google SSO → saved vault account → create account (per settings) → manual fallback."""
+    plan = auth_plan_step(ctx, page, tried)
+    method = plan["method"]
+    tried.append(method)
+    if method == "manual":
+        ans = ask_human(ctr, ctx["candidate_id"], ctx["application_id"], "login_required",
+                        f"Sign-in needed for {ctx['company']}",
+                        {"job": _job(ctx), "url": page.get("url"),
+                         "message": "Sign in (or create the account) in the JobOS Chrome window, then tap Done."})
+        tried.extend(["google", "login", "create"])
+        if ans is None:
+            return page, "login not completed"
+        res = runner("re-extract-auth", TaskType.extract, {})
+        return (res["data"]["page"] if res.get("ok") else page), ""
+    if method == "create":
+        if ctx.get("dry_run"):
+            return page, "dry_run_stop"
+        if plan.get("needs_consent"):
+            ans = ask_human(ctr, ctx["candidate_id"], ctx["application_id"], "account_creation_consent",
+                            f"Create a {plan['site_label']} account for {ctx['company']}?",
+                            {"job": _job(ctx), "url": page.get("url"), "email": plan["email"],
+                             "message": f"{ctx['company']} requires an account. JobOS will create one with "
+                                        f"{plan['email']} and a strong generated password stored in your vault."})
+            if ans is None or ans.get("decision") not in ("approve", "always"):
+                tried.extend(["create"])
+                return page, "account creation declined"
+            if ans.get("decision") == "always":
+                allow_account_creation_step(ctx["candidate_id"])
+        plan["account_ref"] = create_account_step(ctx["candidate_id"], plan["site_key"], plan["email"])
+    res = runner(f"auth-{method}", TaskType.auth, {"method": method, "email": plan.get("email", ""),
+                                                   "account_ref": plan.get("account_ref", ""),
+                                                   "google_account": plan.get("google_account", "")}, timeout_s=240)
+    if not res.get("ok"):
+        return page, f"auth failed: {res.get('error')}"
+    new_page = res["data"]["page"]
+    if res["data"].get("verify_email"):
+        ans = ask_human(ctr, ctx["candidate_id"], ctx["application_id"], "verify_email",
+                        f"Verify your email for {ctx['company']}",
+                        {"job": _job(ctx), "email": plan.get("email", ""),
+                         "message": "Open the verification email from the employer's careers site and click the "
+                                    "link (or let JobOS read it from your inbox), then tap Done."})
+        if ans is not None:
+            r2 = runner("re-extract-verify", TaskType.extract, {})
+            new_page = r2["data"]["page"] if r2.get("ok") else new_page
+    if plan.get("account_ref"):
+        account_status_step(plan["account_ref"], new_page.get("kind") != "login")
+    return new_page, ""
 
 
 def _allowed_hosts(ctx: dict[str, Any], page: dict[str, Any]) -> list[str]:

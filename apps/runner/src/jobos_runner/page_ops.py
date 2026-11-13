@@ -198,6 +198,8 @@ class PageOps:
                 f.options = opts
                 f.type = FieldType.select
                 f.locator["widget"] = "combobox"
+                if len(opts) >= 50:  # long searchable list (schools, cities): react-select renders one page only
+                    f.locator["truncated"] = True
             else:
                 f.locator["widget"] = "autocomplete"
 
@@ -263,8 +265,15 @@ class PageOps:
             return
         if widget in ("combobox", "autocomplete") or field.type == FieldType.combobox:
             values = value if isinstance(value, list) else [value]
+            truncated = bool(field.locator.get("truncated"))
             for v in values:
-                await self._choose_combobox(loc.first, str(v), field.options)
+                try:
+                    await self._choose_combobox(loc.first, str(v), [] if truncated else field.options)
+                except ValueError:
+                    if not truncated:
+                        raise
+                    # searchable list without our value: fall back to the site's "Other" entry
+                    await self._choose_combobox(loc.first, "Other", [])
             return
         if field.type == FieldType.date and await loc.first.get_attribute("type") == "date":
             await loc.first.fill(str(value))
@@ -448,3 +457,106 @@ def _value_matches(field: FormField, fv: FillValue) -> bool:
     if field.type in (FieldType.phone,):
         return re.sub(r"\D", "", str(want))[-8:] in re.sub(r"\D", "", str(got))
     return w == g or (bool(w) and (w in g or g in w))
+
+
+# ------------------------------------------------------------------------------- sign-in walls --
+
+_CONSENT_BTN = re.compile(r"^(continue|allow|confirm|next|i agree|accept)$", re.I)
+_VERIFY_TEXT = re.compile(r"(verify your (email|account)|verification (email|link|code)|check your (email|inbox)|"
+                          r"we('ve| have) sent (you )?an? (email|link|code))", re.I)
+
+
+async def auth_flow(ops: PageOps, method: str, email: str = "", password: str = "", google_account: str = "") -> dict:
+    """Get past a sign-in wall. Returns {"page": FormPage, "verify_email": bool, "note": str}."""
+    page = await ops.extract(harvest=False)
+    if method == "google":
+        await _google_sso(ops, page, google_account)
+    else:
+        await _email_login(ops, page, method, email, password)
+    await ops.settle()
+    await asyncio.sleep(1.5)
+    after = await ops.extract()
+    return {"page": after, "verify_email": bool(_VERIFY_TEXT.search(after.text_excerpt)), "note": ""}
+
+
+async def _click_button(ops: PageOps, page: FormPage, kind: ButtonKind) -> bool:
+    btn = page.button(kind)
+    if btn is None:
+        return False
+    key = btn.locator["button"]
+    await ops.human.click(ops._frame_for_key(key).locator(f'[data-jobos-button="{key}"]').first)
+    return True
+
+
+async def _google_sso(ops: PageOps, page: FormPage, google_account: str) -> None:
+    ctx = ops.page.context
+    popup = None
+    try:
+        async with ctx.expect_page(timeout=8000) as info:
+            if not await _click_button(ops, page, ButtonKind.sso_google):
+                raise LookupError("no 'Sign in with Google' button")
+        popup = await info.value
+    except TimeoutError:
+        popup = None  # same-tab redirect flow
+    target = popup or ops.page
+    with contextlib.suppress(Exception):
+        await target.wait_for_load_state("domcontentloaded", timeout=15000)
+    # Google account chooser: pick the configured account (or the first one)
+    chooser = target.locator("[data-identifier], [data-email]")
+    with contextlib.suppress(Exception):
+        await chooser.first.wait_for(timeout=8000)
+    if await chooser.count():
+        pick = chooser.first
+        if google_account:
+            wanted = target.locator(f'[data-identifier="{google_account}"], [data-email="{google_account}"]')
+            if await wanted.count():
+                pick = wanted.first
+        await pick.click()
+    # consent / continue screens
+    for _ in range(3):
+        await asyncio.sleep(1.5)
+        if popup is not None and popup.is_closed():
+            break
+        btn = target.get_by_role("button", name=_CONSENT_BTN)
+        if await btn.count():
+            with contextlib.suppress(Exception):
+                await btn.first.click(timeout=3000)
+    if popup is not None:
+        for _ in range(20):
+            if popup.is_closed():
+                break
+            await asyncio.sleep(0.5)
+
+
+async def _email_login(ops: PageOps, page: FormPage, method: str, email: str, password: str) -> None:
+    # Workday-style: "Sign in with email" first reveals the form; "Create Account" switches to sign-up
+    if page.button(ButtonKind.email_signin):
+        has_password = await ops.page.locator("input[type=password]:visible").count()
+        if not has_password:
+            await _click_button(ops, page, ButtonKind.email_signin)
+            await ops.settle(5000)
+            page = await ops.extract(harvest=False)
+    if method == "create":
+        pw_count = await ops.page.locator("input[type=password]:visible").count()
+        if pw_count < 2 and page.button(ButtonKind.create_account):
+            await _click_button(ops, page, ButtonKind.create_account)
+            await ops.settle(5000)
+            page = await ops.extract(harvest=False)
+    email_box = ops.page.locator("input[type=email]:visible, [data-automation-id=email]:visible, "
+                                 "input[autocomplete=username]:visible, input[name*=email i]:visible").first
+    if await email_box.count():
+        await ops.human.type_text(email_box, email)
+    pw = ops.page.locator("input[type=password]:visible")
+    for i in range(await pw.count()):  # password + verify password
+        await ops.human.type_text(pw.nth(i), password)
+    if method == "create":  # terms checkboxes on the sign-up form
+        boxes = ops.page.locator("input[type=checkbox]:visible, [data-automation-id=createAccountCheckbox]:visible")
+        for i in range(await boxes.count()):
+            box = boxes.nth(i)
+            with contextlib.suppress(Exception):
+                if not await box.is_checked():
+                    await box.check(timeout=3000)
+    page = await ops.extract(harvest=False)
+    kind = ButtonKind.create_account if method == "create" else ButtonKind.signin
+    if not await _click_button(ops, page, kind):
+        await _click_button(ops, page, ButtonKind.signin if kind == ButtonKind.create_account else ButtonKind.submit)

@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>Sign in - Google Accounts</title></head><body>
+<h1>Choose an account</h1>
+<ul>
+  <li data-identifier="other@example.com" onclick="pick(this)">Other Person</li>
+  <li data-identifier="aarav.mehta@example.com" onclick="pick(this)">Aarav Mehta</li>
+</ul>
+<script>function pick(el){ window.opener.postMessage({ok: true, email: el.dataset.identifier}, "*"); setTimeout(() => window.close(), 100); }</script>
+</body></html>

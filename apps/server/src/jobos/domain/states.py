@@ -72,3 +72,5 @@ class InterventionKind(StrEnum):
     unknown_page = "unknown_page"
     runner_offline = "runner_offline"
     blocked = "blocked"
+    account_creation_consent = "account_creation_consent"
+    verify_email = "verify_email"

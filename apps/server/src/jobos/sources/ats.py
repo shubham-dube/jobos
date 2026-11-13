@@ -61,8 +61,8 @@ class GreenhouseSource:
             jobs.append(NormalizedJob(
                 source="greenhouse", source_job_id=f"{board_token}:{jid}", company_name=j.get("company_name") or company_name,
                 board_token=board_token, url=j.get("absolute_url") or "",
-                # The hosted board form works even when the company embeds Greenhouse on its own site.
-                apply_url=f"https://job-boards.greenhouse.io/{board_token}/jobs/{jid}",
+                # The embed form renders directly even when the company redirects hosted pages to its own site.
+                apply_url=f"https://job-boards.greenhouse.io/embed/job_app?for={board_token}&token={jid}",
                 ats="greenhouse", title=j.get("title", "").strip(),
                 department=depts[0]["name"] if depts else "",
                 locations=locations, countries=countries, remote_type=remote,

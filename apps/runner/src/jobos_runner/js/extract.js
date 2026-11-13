@@ -112,14 +112,23 @@
 
     if (type === "radio" || type === "checkbox" || el.getAttribute("role") === "radiogroup") {
       let group;
+      // Group by a shared fieldset/role=group first: some ATSs (Ashby) give every checkbox its own name.
+      const box = el.getAttribute("role") === "radiogroup" ? null : el.closest("fieldset, [role=group]");
+      const boxMembers = box ? Array.from(box.querySelectorAll(`input[type=${type}]`)) : [];
+      let groupId;
       if (el.getAttribute("role") === "radiogroup") {
         group = Array.from(el.querySelectorAll("[role=radio], input[type=radio]"));
+        groupId = "rg:" + (el.id || all.indexOf(el));
+      } else if (boxMembers.length > 1) {
+        group = boxMembers;
+        groupId = "fs:" + type + ":" + all.indexOf(boxMembers[0]);
       } else if (el.name) {
         group = Array.from(document.querySelectorAll(`input[type=${type}][name="${CSS.escape(el.name)}"]`));
+        groupId = type + ":" + el.name;
       } else {
         group = [el];
+        groupId = "single:" + all.indexOf(el);
       }
-      const groupId = el.getAttribute("role") === "radiogroup" ? "rg:" + (el.id || all.indexOf(el)) : (el.name ? type + ":" + el.name : "single:" + all.indexOf(el));
       if (seenGroups.has(groupId)) continue;
       seenGroups.add(groupId);
       const visibleOpts = group.filter((g) => isVisible(g) || (g.labels && g.labels[0] && isVisible(g.labels[0])) || isVisible(g.parentElement));
@@ -127,7 +136,7 @@
       const optionLabels = visibleOpts.map((g) => g.getAttribute("role") === "radio" ? visibleText(g) : optionLabel(g));
       let fieldType, label;
       const optionLabelEls = visibleOpts.flatMap((g) => (g.labels ? Array.from(g.labels) : []));
-      if (type === "checkbox" && group.length === 1) {
+      if (type === "checkbox" && group.length === 1 && !box) {
         fieldType = "checkbox";
         label = containerLabel(el, optionLabelEls) || optionLabels[0] || labelFor(el);
         if (!label) label = optionLabels[0];
@@ -209,6 +218,7 @@
   }
 
   // ---------- buttons
+  const hasPasswordField = Array.from(document.querySelectorAll("input[type=password]")).some(isVisible);
   const buttonEls = Array.from(document.querySelectorAll("button, input[type=submit], [role=button], a"));
   const meaningful = fields.filter((f) => f.type !== "checkbox" || f.required).length;
   // Rank candidates per kind; the best one wins (e.g. "Submit application" beats a top-of-page "Apply").
@@ -226,6 +236,14 @@
       else if (/^(next|continue|save (and|&) continue|proceed|next step|review( application)?)\b/i.test(text)) { kind = "next"; score = 8; }
     } else if (/^(apply( (now|for this (job|role|position)|here|online))?|i'?m interested|start application)$/i.test(text)) {
       kind = "apply"; score = 8;
+    }
+    // sign-in walls (Workday & co.): recognised on any page
+    const auto = (b.getAttribute("data-automation-id") || "").toLowerCase();
+    if (!kind) {
+      if (/^(sign in|log in|continue|login) with google$/i.test(text) || auto === "googlesigninbutton") { kind = "sso_google"; score = 10; }
+      else if (/^(sign in|continue|log in) with (e-?mail|email address)$/i.test(text) || auto === "signinwithemailbutton") { kind = "email_signin"; score = 10; }
+      else if (/^(create (an )?account|sign up|register)$/i.test(text) || auto === "createaccountlink" || auto === "createaccountsubmitbutton") { kind = "create_account"; score = auto === "createaccountsubmitbutton" ? 12 : 8; }
+      else if (hasPasswordField && (/^(sign in|log in|login)$/i.test(text) || auto === "signinsubmitbutton")) { kind = "signin"; score = 10; }
     }
     if (!kind) return;
     score += (inForm ? 3 : 0) + (isSubmitType ? 2 : 0) + domIndex / 100000;  // later in DOM ≈ bottom of form
@@ -248,7 +266,7 @@
   if (/(thank(s| you) for (applying|your (application|interest))|application (has been |was )?(received|submitted)|we('ve| have) received your application|successfully (applied|submitted))/i.test(lower) && meaningful < 2) kind = "confirmation";
   else if (/(no longer (accepting|available|open)|position (has been )?(filled|closed)|job (posting )?(is )?(not found|closed|expired)|page not found)/i.test(lower) && meaningful < 2) kind = "closed";
   else if (captchaFrame || /verify (that )?you are (a )?human|are you a robot/i.test(lower)) kind = "captcha";
-  else if (hasPassword && meaningful <= 3) kind = "login";
+  else if ((hasPassword && meaningful <= 4) || (meaningful < 2 && buttons.some((b) => ["sso_google", "email_signin", "create_account"].includes(b.kind)))) kind = "login";
   else if (meaningful >= 2) kind = "form";
   else if (buttons.some((b) => b.kind === "apply")) kind = "job_description";
 

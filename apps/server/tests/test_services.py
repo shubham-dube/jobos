@@ -25,7 +25,7 @@ def test_greenhouse_lever_ashby_parsing() -> None:
                   "jobUrl": "https://jobs.ashbyhq.com/acme/y", "applyUrl": "https://jobs.ashbyhq.com/acme/y/application",
                   "descriptionPlain": "LLMs", "publishedAt": "2026-11-05T00:00:00Z", "isListed": True}]}))
     gh = GreenhouseSource().fetch("acme", "Acme")[0]
-    assert gh.apply_url == "https://job-boards.greenhouse.io/acme/jobs/1" and gh.countries == ["IN"]
+    assert gh.apply_url == "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=1" and gh.countries == ["IN"]
     assert gh.description_text == "Build APIs"
     lv = LeverSource().fetch("acme", "Acme")[0]
     assert lv.remote_type == "hybrid" and lv.countries == ["GB"]
@@ -41,7 +41,14 @@ def test_detect_ats_from_url() -> None:
 
 
 def test_runner_task_lease_and_submit_never_re_leased(session) -> None:
-    cand = get_or_create_default_candidate(session)
+    from jobos.db.models import Candidate, Org
+
+    org = Org(name="isolated")
+    session.add(org)
+    session.flush()
+    cand = Candidate(org_id=org.id, name="isolated", settings={})  # own candidate: no tasks from other tests
+    session.add(cand)
+    session.flush()
     runner, token = rg.create_runner(session, cand.id, "pc")
     assert rg.runner_by_token(session, token).id == runner.id
     t1 = rg.create_task(session, candidate_id=cand.id, workflow_id="wf", idempotency_key="k1", type=TaskType.extract,
