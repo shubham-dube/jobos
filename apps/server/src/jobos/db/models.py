@@ -74,7 +74,7 @@ class Document(TimestampMixin, Base):
     __tablename__ = "documents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
     candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(30), default="resume")  # resume | cover_letter | other
+    kind: Mapped[str] = mapped_column(String(30), default="resume")  # resume | transcript | cover_letter | other
     label: Mapped[str] = mapped_column(String(120), default="")  # e.g. "Backend", "AI Engineer"
     filename: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(100), default="application/pdf")

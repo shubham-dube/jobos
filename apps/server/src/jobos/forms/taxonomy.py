@@ -28,6 +28,7 @@ class Ctx:
     job_countries: list[str] | None = None
     resume_document_id: str = ""
     separate_phone_country: bool = False
+    documents: dict[str, str] | None = None  # kind (transcript, cover_letter, ...) -> default document id
 
 
 Getter = Callable[[Ctx, FormField], tuple[object, str] | None]
@@ -133,6 +134,13 @@ def _resume(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
     return (ctx.resume_document_id, "document:resume") if ctx.resume_document_id else None
 
 
+def _doc(kind: str) -> Getter:
+    def get(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
+        doc_id = (ctx.documents or {}).get(kind)
+        return (doc_id, f"document:{kind}") if doc_id else None
+    return get
+
+
 # (label regex, allowed field types or None, getter). First match wins; order matters.
 RULES: list[tuple[re.Pattern[str], set[FieldType] | None, Getter]] = [
     (re.compile(r"^(legal )?first name|^given name|^first$", re.I), None, _basic("first_name")),
@@ -160,6 +168,9 @@ RULES: list[tuple[re.Pattern[str], set[FieldType] | None, Getter]] = [
     (re.compile(r"^(discipline|major|field of study)$", re.I), {FieldType.text, FieldType.select, FieldType.combobox}, _discipline),
     (re.compile(r"graduation (year|date)", re.I), {FieldType.text, FieldType.number}, _grad_year),
     (re.compile(r"resume|cv\b|curriculum", re.I), {FieldType.file}, _resume),
+    (re.compile(r"transcript|grade ?(card|sheet|report)|mark ?sheet|academic record", re.I), {FieldType.file},
+     _doc("transcript")),
+    (re.compile(r"cover ?letter|motivation(al)? letter", re.I), {FieldType.file}, _doc("cover_letter")),
 ]
 
 _DECLINE = re.compile(r"(decline|prefer not|don.?t wish|do not wish|not to (say|answer|disclose)|rather not)", re.I)

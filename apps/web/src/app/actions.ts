@@ -8,6 +8,14 @@ function str(form: FormData, key: string): string {
   return String(form.get(key) ?? "").trim();
 }
 
+/** Same rules the server's taxonomy uses to pick a stored document for an upload field. */
+function documentKind(label: string): string {
+  if (/transcript|grade ?(card|sheet|report)|mark ?sheet|academic record/i.test(label)) return "transcript";
+  if (/cover ?letter|motivation(al)? letter/i.test(label)) return "cover_letter";
+  if (/resume|\bcv\b|curriculum/i.test(label)) return "resume";
+  return "other";
+}
+
 export async function applyToJob(form: FormData) {
   const jobId = str(form, "job_id");
   const res = await api<{ application_id: string }>(`/api/v1/jobs/${jobId}/apply`, { method: "POST", json: {} });
@@ -57,6 +65,18 @@ export async function answerIntervention(form: FormData) {
         else answers[key] = value;
       }
       if (k.startsWith("r:")) remember[k.slice(2)] = String(v);
+      if (k.startsWith("f:") && v instanceof File && v.size > 0) {
+        // upload the file as a Document, then answer the question with a reference to it
+        const key = k.slice(2);
+        const label = str(form, `l:${key}`);
+        const fd = new FormData();
+        fd.set("file", v);
+        fd.set("kind", documentKind(label));
+        fd.set("label", label.slice(0, 120));
+        fd.set("is_default", "true");
+        const doc = await api<{ id: string }>("/api/v1/documents", { method: "POST", body: fd });
+        answers[key] = `doc:${doc.id}`;
+      }
     }
     body = { answers, remember };
   } else body = { done: true };
@@ -83,6 +103,7 @@ export async function uploadDocument(form: FormData) {
   const fd = new FormData();
   fd.set("file", form.get("file") as File);
   fd.set("label", str(form, "label"));
+  fd.set("kind", str(form, "kind") || "resume");
   fd.set("is_default", form.get("is_default") ? "true" : "false");
   await api("/api/v1/documents", { method: "POST", body: fd });
   revalidatePath("/profile");

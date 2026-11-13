@@ -118,10 +118,15 @@ def list_documents(auth: AuthContext = Depends(owner), s: Session = Depends(db))
              "created_at": d.created_at} for d in docs]
 
 
+DOCUMENT_KINDS = {"resume", "transcript", "cover_letter", "other"}
+
+
 @router.post("/documents")
 def upload_document(file: UploadFile = File(...), label: str = Form(default=""), kind: str = Form(default="resume"),
                     is_default: bool = Form(default=False), auth: AuthContext = Depends(owner),
                     s: Session = Depends(db)) -> dict[str, Any]:
+    if kind not in DOCUMENT_KINDS:
+        raise HTTPException(422, f"kind must be one of {sorted(DOCUMENT_KINDS)}")
     data = file.file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(413, "max 10MB")

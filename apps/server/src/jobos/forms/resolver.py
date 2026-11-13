@@ -84,6 +84,7 @@ class ResolveContext:
     job_countries: list[str]
     job_id: str = ""
     resume_document_id: str = ""
+    documents: dict[str, str] = field(default_factory=dict)
     site_key: str = ""
     recipe_fields: dict[str, Any] = field(default_factory=dict)  # signature -> {"value":..., "source":...}
     extra_answers: dict[str, Any] = field(default_factory=dict)  # key -> value answered by the user now
@@ -99,7 +100,8 @@ class ResolveOutcome:
 def resolve_page(s: Session, gateway: LLMGateway | None, page: FormPage, rc: ResolveContext, *,
                  ref: str = "", error_hints: dict[str, str] | None = None) -> ResolveOutcome:
     ctx = prepare_ctx(Ctx(profile=rc.profile, job_title=rc.job_title, company=rc.company,
-                          job_countries=rc.job_countries, resume_document_id=rc.resume_document_id), page)
+                          job_countries=rc.job_countries, resume_document_id=rc.resume_document_id,
+                          documents=rc.documents), page)
     plan = FillPlan(page_index=page.page_index)
     used: list[str] = []
     pending: list[tuple[FormField, list[AnswerCandidate]]] = []
@@ -110,12 +112,20 @@ def resolve_page(s: Session, gateway: LLMGateway | None, page: FormPage, rc: Res
             continue
         # 0. explicit answer from the user for this application
         if f.key in rc.extra_answers:
-            plan.values.append(FillValue(key=f.key, value=rc.extra_answers[f.key], source=ValueSource.user,
-                                         confidence=1.0))
+            given = rc.extra_answers[f.key]
+            if f.type == FieldType.file:  # the user uploaded a document for this field: "doc:<id>"
+                plan.values.append(FillValue(key=f.key, value=None, file_ref=str(given).removeprefix("doc:"),
+                                             source=ValueSource.document, source_ref="document:user_upload",
+                                             confidence=1.0))
+            else:
+                plan.values.append(FillValue(key=f.key, value=given, source=ValueSource.user, confidence=1.0))
             continue
         # skip optional files we have no document for (e.g. cover letter) and already-filled optional fields
         if f.type == FieldType.file and not re.search(r"resume|cv\b|curriculum", f.label, re.I):
-            if f.required:
+            doc = map_field(ctx, f)  # transcript / cover letter the user keeps in Documents
+            if doc:
+                plan.values.append(doc)
+            elif f.required:
                 plan.unresolved.append(Unresolved(key=f.key, label=f.label, type=f.type, required=True,
                                                   reason="A document is required for this upload"))
             continue

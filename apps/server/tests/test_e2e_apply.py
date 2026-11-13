@@ -48,20 +48,32 @@ def test_full_application_flow(e2e_stack) -> None:
     c.post(f"/api/v1/interventions/{iv['id']}/answer",
            json={"answers": {"id:salary": "80000"}, "remember": {"id:salary": "global"}}).raise_for_status()
 
-    # 2) review before submit (default rule = review everything)
+    # 2) page 2 needs a transcript we don't have → the user uploads one (stored as a Document, kind=transcript)
+    iv = st.wait(lambda: st.open_iv("missing_answer", app_id), app_id, timeout=180)
+    [q] = iv["payload"]["questions"]
+    assert (q["label"], q["type"]) == ("Please provide a recent transcript", "file")
+    doc = c.post("/api/v1/documents", files={"file": ("transcript.pdf", b"%PDF-1.4 transcript", "application/pdf")},
+                 data={"kind": "transcript", "label": q["label"], "is_default": "true"}).json()
+    c.post(f"/api/v1/interventions/{iv['id']}/answer",
+           json={"answers": {q["key"]: f"doc:{doc['id']}"}}).raise_for_status()
+
+    # 3) review before submit (default rule = review everything)
     iv = st.wait(lambda: st.open_iv("review_before_submit", app_id), app_id, timeout=180)
     fields = {f["label"]: f for p in iv["payload"]["pages"] for f in p["fields"]}
+    assert fields["Please provide a recent transcript"]["source"] == "document"
     assert fields["Email"]["value"] == "aarav.mehta@example.com"
     assert fields["Why do you want to work at Example Corp?"]["source"] == "generated"
     c.post(f"/api/v1/interventions/{iv['id']}/answer", json={"decision": "approve"}).raise_for_status()
 
-    # 3) submitted with confirmation + evidence
+    # 4) submitted with confirmation + evidence (the fake ATS rejects the submit without the transcript)
     st.wait(lambda: c.get(f"/api/v1/applications/{app_id}").json()["state"] == "submitted", app_id)
     detail = c.get(f"/api/v1/applications/{app_id}").json()
     assert len(detail["pages"]) >= 3 and any(p["screenshots"] for p in detail["pages"])
 
-    # 4) answer bank + learned recipe
-    assert any(a["value"] == "80000" for a in c.get("/api/v1/answers").json())
+    # 5) answer bank + learned recipe; uploaded files go to Documents, not the answer bank
+    answers = c.get("/api/v1/answers").json()
+    assert any(a["value"] == "80000" for a in answers)
+    assert not any(str(a["value"]).startswith("doc:") for a in answers)
     with session_scope() as s:
         recipe = s.scalar(select(SiteRecipe).where(SiteRecipe.site_key.like("site:127.0.0.1%")))
         assert recipe is not None and recipe.successes >= 1 and recipe.data["nav"] == ["apply"]

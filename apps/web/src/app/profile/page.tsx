@@ -43,18 +43,24 @@ export default async function ProfilePage() {
         <ul className="space-y-1 text-sm">
           {docs.map((d) => (
             <li key={d.id} className="flex items-center gap-2">
-              <span>{d.filename}</span>{d.label && <Badge>{d.label}</Badge>}{d.is_default && <Badge tone="submitted">default</Badge>}
+              <span>{d.filename}</span>{d.kind !== "resume" && <Badge>{d.kind.replace("_", " ")}</Badge>}{d.label && <Badge>{d.label}</Badge>}{d.is_default && <Badge tone="submitted">default</Badge>}
               <form action={deleteDocument} className="ml-auto"><input type="hidden" name="id" value={d.id} /><button className="text-xs text-rose-600">delete</button></form>
             </li>
           ))}
         </ul>
         <form action={uploadDocument} className="flex flex-wrap items-center gap-2">
           <input type="file" name="file" accept=".pdf,.doc,.docx" required className="text-sm" />
+          <select name="kind" className="input w-auto" defaultValue="resume">
+            <option value="resume">Resume</option>
+            <option value="transcript">Transcript</option>
+            <option value="cover_letter">Cover letter</option>
+            <option value="other">Other</option>
+          </select>
           <input name="label" className="input w-48" placeholder="Label, e.g. Backend" />
           <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="is_default" /> default</label>
           <button className="btn-secondary">Upload</button>
         </form>
-        <p className="text-xs text-slate-500">The matcher picks the best-fitting variant (by label) for each job.</p>
+        <p className="text-xs text-slate-500">The matcher picks the best-fitting resume (by label) for each job. Transcripts and cover letters are attached automatically when a form asks for them.</p>
       </section>
 
       <section className="card space-y-3">

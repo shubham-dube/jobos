@@ -121,3 +121,27 @@ def test_truncated_searchable_list_accepts_profile_value() -> None:
     field = f("s", "School", FieldType.select, [f"University {i}" for i in range(300)])
     field.locator["truncated"] = True
     assert map_field(ctx, field).value == "Example Institute of Technology"
+
+
+def test_required_upload_uses_stored_document_or_asks(session) -> None:
+    """A required transcript upload is filled from Documents (by kind), else becomes a question; a user's
+    upload answer (doc:<id>) is attached as a file, never typed as text."""
+    cand = get_or_create_default_candidate(session)
+    fake = FakeProvider()
+    page = FormPage(url="https://x", fields=[
+        f("t", "Please provide a recent transcript", FieldType.file),
+        f("c", "Cover Letter", FieldType.file, required=False),
+    ])
+    base = dict(profile=PROFILE, candidate_id=cand.id, job_title="SWE", company="Acme", job_countries=["GB"])
+
+    out = resolve_page(session, _gateway(fake), page, ResolveContext(**base))
+    assert [u.key for u in out.plan.unresolved] == ["t"] and out.plan.values == []
+
+    out = resolve_page(session, _gateway(fake), page, ResolveContext(**base, documents={"transcript": "doc-1"}))
+    assert [(v.key, v.file_ref, v.source) for v in out.plan.values] == [("t", "doc-1", ValueSource.document)]
+    assert out.plan.unresolved == []
+
+    out = resolve_page(session, _gateway(fake), page, ResolveContext(**base, extra_answers={"t": "doc:abc"}))
+    v = out.plan.values[0]
+    assert (v.key, v.value, v.file_ref, v.source_ref) == ("t", None, "abc", "document:user_upload")
+    assert fake.calls == []

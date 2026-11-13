@@ -8,6 +8,9 @@ import { answerIntervention } from "../../actions";
 function QuestionInput({ q }: { q: Question }) {
   const name = `a:${q.key}`;
   const suggestion = q.suggestion === null || q.suggestion === undefined ? "" : String(q.suggestion);
+  if (q.type === "file") {
+    return <input type="file" name={`f:${q.key}`} accept=".pdf,.doc,.docx,.txt,.rtf" required className="text-sm" />;
+  }
   if (q.type === "multiselect" && q.options.length) {
     return <div className="space-y-1">{q.options.map((o) => <label key={o} className="flex items-center gap-2 text-sm"><input type="checkbox" name={name} value={o} /> {o}</label>)}</div>;
   }
@@ -51,14 +54,17 @@ export default async function InterventionPage({ params }: { params: Promise<{ i
           {iv.payload.questions?.map((q) => (
             <div key={q.key} className="space-y-1">
               <label className="block font-medium">{q.label}</label>
+              {q.type === "file" && <input type="hidden" name={`l:${q.key}`} value={q.label} />}
               {q.reason && <p className="text-xs text-slate-500">{q.reason}</p>}
               <QuestionInput q={q} />
-              <select name={`r:${q.key}`} className="input w-auto text-xs" defaultValue="global">
+              {q.type === "file" ? (
+                <p className="text-xs text-slate-500">Saved to your Documents and reused automatically for similar uploads.</p>
+              ) : <select name={`r:${q.key}`} className="input w-auto text-xs" defaultValue="global">
                 <option value="global">Remember for all applications</option>
                 <option value="company">Remember for this company</option>
                 <option value="job">Only this job</option>
                 <option value="none">Don&apos;t remember</option>
-              </select>
+              </select>}
             </div>
           ))}
           <button className="btn">Send answers</button>

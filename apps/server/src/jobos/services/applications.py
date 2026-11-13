@@ -97,7 +97,18 @@ def attempt_context(s: Session, app_id: uuid.UUID) -> dict[str, Any]:
         "site_key": site_key_for(job.ats, job.apply_url, board), "board_token": board,
         "match_score": match.score if match else None, "legitimacy": match.legitimacy if match else None,
         "dry_run": bool(app.dry_run), "resume_document_id": str(doc.id) if doc else "", "resume_filename": doc.filename if doc else "",
+        "documents": default_documents(s, app.candidate_id),
     }
+
+
+def default_documents(s: Session, candidate_id: uuid.UUID) -> dict[str, str]:
+    """Non-resume documents by kind (default first, else newest), e.g. {"transcript": "<id>"}."""
+    out: dict[str, str] = {}
+    rows = s.scalars(select(Document).where(Document.candidate_id == candidate_id, Document.kind != "resume")
+                     .order_by(Document.is_default.desc(), Document.created_at.desc()))
+    for d in rows:
+        out.setdefault(d.kind, str(d.id))
+    return out
 
 
 def submitted_counts(s: Session, candidate_id: uuid.UUID, company: str) -> tuple[int, int]:

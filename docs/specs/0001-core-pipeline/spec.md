@@ -16,6 +16,11 @@ browser → ask when unsure → remember → track replies.
       and LLM-scores fit with reasons/gaps.
 - [x] AC3 Applying works on unknown sites via the generic extractor; verified live (dry run) on Greenhouse and Lever.
 - [x] AC4 Every filled value has a source; unknown required answers become interventions; answers are remembered.
+      Required uploads other than the resume (transcript, cover letter) are filled from Documents by kind; if none
+      is stored, the intervention asks for a file, which is saved to Documents and reused (never put in the answer
+      bank). Required-ness is read from the visible label too (Greenhouse hides the input's own label).
+- [x] AC5b A submit the site's own validation rejects (form still on screen with field errors) is recorded as
+      `failed` (nothing was sent, retryable), never `uncertain`.
 - [x] AC5 Submit only via the gate; default review; founder-defined approval rules can auto-submit.
 - [x] AC6 Durable: waiting days for an answer or review survives restarts; tab loss after review triggers replay.
 - [x] AC7 Evidence: per-page fill plan, read-back results, screenshots, timeline.

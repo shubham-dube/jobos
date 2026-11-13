@@ -92,6 +92,7 @@ def resolve_step(ctx: dict[str, Any], page: dict[str, Any], extra_answers: dict[
         rc = ResolveContext(
             profile=get_profile(s, cand_id), candidate_id=cand_id, job_title=ctx["title"], company=ctx["company"],
             job_countries=ctx["countries"], job_id=ctx["job_id"], resume_document_id=ctx["resume_document_id"],
+            documents=ctx.get("documents") or {},
             site_key=ctx["site_key"], recipe_fields=recipes.recipe_fields(s, ctx["site_key"]),
             extra_answers=extra_answers, min_confidence=settings.thresholds.auto_answer_confidence)
         out = resolve_page(s, get_gateway(), FormPage.model_validate(page), rc,
@@ -106,8 +107,8 @@ def save_answers_step(ctx: dict[str, Any], questions: list[dict[str, Any]], answ
     with session_scope() as s:
         for q in questions:
             key = q["key"]
-            if key not in answer.get("answers", {}):
-                continue
+            if key not in answer.get("answers", {}) or q.get("type") == "file":
+                continue  # uploaded files live in Documents (reused by kind), not in the answer bank
             scope = remember.get(key, "global")
             if scope == "none":
                 continue
@@ -267,14 +268,24 @@ def set_outcome_step(app_id: str, outcome: str) -> None:
 
 
 @DBOS.step()
-def file_specs_step(ctx: dict[str, Any]) -> list[dict[str, Any]]:
-    if not ctx.get("resume_document_id"):
-        return []
+def file_specs_step(ctx: dict[str, Any], refs: list[str]) -> list[dict[str, Any]]:
+    """Download specs for the candidate's own documents referenced by a plan (resume, transcript, uploads)."""
+    specs: list[dict[str, Any]] = []
     with session_scope() as s:
-        d = s.get(Document, uuid.UUID(ctx["resume_document_id"]))
-        if d is None:
-            return []
-        return [{"ref": str(d.id), "filename": d.filename, "download_path": f"/runner/v1/files/{d.id}"}]
+        for ref in dict.fromkeys(refs):
+            try:
+                d = s.get(Document, uuid.UUID(ref))
+            except ValueError:
+                continue
+            if d is None or str(d.candidate_id) != ctx["candidate_id"]:
+                continue  # never hand another candidate's file to the runner
+            specs.append({"ref": str(d.id), "filename": d.filename, "download_path": f"/runner/v1/files/{d.id}"})
+    return specs
+
+
+def _files_for(ctx: dict[str, Any], plan: dict[str, Any]) -> list[dict[str, Any]]:
+    refs = [v["file_ref"] for v in plan.get("values", []) if v.get("file_ref")]
+    return file_specs_step(ctx, refs) if refs else []
 
 
 # ---------------------------------------------------------------------------------- workflow --
@@ -288,7 +299,6 @@ def application_workflow(app_id: str) -> str:
     ctr = Counter()
     cid = ctx["candidate_id"]
     session = f"app:{app_id}:{ctx['attempt']}"
-    files = file_specs_step(ctx)
     nav_labels: list[str] = []
 
     def runner(label: str, ttype: TaskType, payload: dict[str, Any], timeout_s: int = 180) -> dict[str, Any]:
@@ -323,7 +333,7 @@ def application_workflow(app_id: str) -> str:
     results: list[dict[str, Any]] = []
     extra: dict[str, Any] = {}
     for _ in range(MAX_PAGES):
-        plan, fill, page_after = _complete_page(ctx, ctr, runner, page, extra, files)
+        plan, fill, page_after = _complete_page(ctx, ctr, runner, page, extra)
         if plan is None:
             return fail(fill.get("error", "could not complete page") if fill else "expired",
                         AppState.expired.value if fill is None else AppState.failed.value)
@@ -369,7 +379,7 @@ def application_workflow(app_id: str) -> str:
         # the tab may have been closed while waiting: replay deterministically from stored plans
         check = runner("check-alive", TaskType.extract, {})
         if not check.get("ok") or check["data"]["page"].get("kind") != "form":
-            replay = _replay(ctx, runner, pages, plans, files)
+            replay = _replay(ctx, runner, pages, plans)
             if replay:
                 return fail(replay)
 
@@ -537,7 +547,7 @@ def _allowed_hosts(ctx: dict[str, Any], page: dict[str, Any]) -> list[str]:
     return sorted(h for h in hosts if h)
 
 
-def _complete_page(ctx, ctr, runner, page, extra, files):
+def _complete_page(ctx, ctr, runner, page, extra):
     """Resolve → ask the human for gaps → fill → verify (retry once with site errors)."""
     error_hints: dict[str, str] = {}
     fill: dict[str, Any] = {}
@@ -561,7 +571,7 @@ def _complete_page(ctx, ctr, runner, page, extra, files):
             plan = resolve_step(ctx, page, extra, error_hints)
             if any(u.get("required", True) for u in plan["unresolved"]):
                 continue
-        res = runner(f"fill-p{page.get('page_index', 0)}", TaskType.fill, {"plan": plan, "files": files},
+        res = runner(f"fill-p{page.get('page_index', 0)}", TaskType.fill, {"plan": plan, "files": _files_for(ctx, plan)},
                      timeout_s=600)
         if not res.get("ok"):
             return None, {"error": f"fill failed: {res.get('error')}"}, page
@@ -582,14 +592,15 @@ def _complete_page(ctx, ctr, runner, page, extra, files):
     return plan, fill, page_after
 
 
-def _replay(ctx, runner, pages, plans, files) -> str:
+def _replay(ctx, runner, pages, plans) -> str:
     res = runner("replay-open", TaskType.open_page, {"url": ctx["apply_url"]})
     if not res.get("ok"):
         return f"replay open failed: {res.get('error')}"
     if res["data"]["page"].get("kind") == "job_description":
         res = runner("replay-apply", TaskType.click, {"button_kind": "apply"})
     for i, plan in enumerate(plans):
-        r = runner(f"replay-fill-{i}", TaskType.fill, {"plan": plan, "files": files}, timeout_s=600)
+        r = runner(f"replay-fill-{i}", TaskType.fill, {"plan": plan, "files": _files_for(ctx, plan)},
+                   timeout_s=600)
         if not r.get("ok") or any(not x["ok"] for x in r["data"]["result"]["results"]):
             return "replay after review did not reproduce the form; please re-run"
         if i < len(plans) - 1:

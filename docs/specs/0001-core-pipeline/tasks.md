@@ -12,5 +12,7 @@
 - [x] Notifications (WhatsApp, Resend), IMAP inbox clerk
 - [x] Dashboard (Next.js)
 - [x] Tests: 30 (unit + e2e real browser vs fake multi-page ATS); live dry runs on Greenhouse + Lever
+- [x] Document kinds (transcript / cover letter) + file-upload interventions; validation-blocked submits → failed
+- [x] Application-deadline filter ("Deadline to Apply …"); submit waits up to 60s for slow confirmations
 - [ ] Founder acceptance (AC11)
 - [ ] Next: JobSpy connector (LinkedIn/Indeed/Naukri discovery), Workday adapter + vault, tailoring (RenderCV)
