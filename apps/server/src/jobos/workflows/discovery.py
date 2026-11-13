@@ -53,9 +53,9 @@ def evaluate_step(search_profile_id: str, max_llm_scores: int) -> dict[str, Any]
 
 
 @DBOS.step()
-def auto_queue_step(search_profile_id: str) -> list[tuple[str, str]]:
+def auto_queue_step(search_profile_id: str) -> list[tuple[str, str, str]]:
     """Create applications for shortlisted matches (auto_apply profiles). Returns (app_id, company)."""
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     with session_scope() as s:
         sp = s.get(SearchProfile, uuid.UUID(search_profile_id))
         if sp is None or not sp.auto_apply:
@@ -74,7 +74,8 @@ def auto_queue_step(search_profile_id: str) -> list[tuple[str, str]]:
                 m.status = "scored"
                 continue
             m.status = "queued"
-            out.append((str(app.id), job.company_name))
+            app.workflow_id = f"apply:{app.id}:{uuid.uuid4().hex[:8]}"
+            out.append((str(app.id), job.company_name, app.workflow_id))
     return out
 
 
@@ -90,8 +91,8 @@ def discovery_workflow(search_profile_id: str, max_llm_scores: int = 100) -> dic
     from .application import enqueue_application
 
     queued = auto_queue_step(search_profile_id)
-    for app_id, company in queued:
-        enqueue_application(app_id, company)
+    for app_id, company, wf_id in queued:
+        enqueue_application(app_id, company, wf_id)
     summary["queued"] = len(queued)
     return summary
 

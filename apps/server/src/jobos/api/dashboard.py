@@ -278,19 +278,23 @@ def apply(job_id: str, body: ApplyIn | None = None, auth: AuthContext = Depends(
     if body:
         app.dry_run = body.dry_run
     job = s.get(Job, app.job_id)
+    app.workflow_id = new_workflow_id(str(app.id))  # recorded before enqueue so cancel always finds it
     s.commit()
-    _enqueue(str(app.id), job.company_name if job else "")
+    _enqueue(str(app.id), job.company_name if job else "", app.workflow_id)
     return {"application_id": str(app.id)}
 
 
-def _enqueue(app_id: str, company: str) -> None:
+def new_workflow_id(app_id: str) -> str:
+    return f"apply:{app_id}:{uuid.uuid4().hex[:8]}"
+
+
+def _enqueue(app_id: str, company: str, workflow_id: str) -> None:
     from dbos import EnqueueOptions
 
     from jobos.workflows.runtime import client
 
     opts: EnqueueOptions = {"workflow_name": "application_workflow", "queue_name": "apply",
-                            "workflow_id": f"apply:{app_id}:{uuid.uuid4().hex[:8]}",
-                            "queue_partition_key": company.lower() or "default"}
+                            "workflow_id": workflow_id, "queue_partition_key": company.lower() or "default"}
     client().enqueue(opts, app_id)
 
 
@@ -357,8 +361,9 @@ def retry_application(app_id: str, auth: AuthContext = Depends(owner), s: Sessio
         raise HTTPException(409, "application is still running")
     transition(s, a, AppState.queued, actor="user", data={"reason": "retry"})
     j = s.get(Job, a.job_id)
+    a.workflow_id = new_workflow_id(str(a.id))
     s.commit()
-    _enqueue(str(a.id), j.company_name if j else "")
+    _enqueue(str(a.id), j.company_name if j else "", a.workflow_id)
     return {"ok": True}
 
 

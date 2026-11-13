@@ -372,3 +372,18 @@ class AuditLog(Base):
     target: Mapped[str] = mapped_column(String(200), default="")
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class SiteAccount(TimestampMixin, Base):
+    """Accounts the agents created/used on employer sites (Workday tenants etc.). Password encrypted (vault)."""
+
+    __tablename__ = "site_accounts"
+    __table_args__ = (UniqueConstraint("candidate_id", "site_key"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), index=True)
+    site_key: Mapped[str] = mapped_column(String(300))  # e.g. "workday:nvidia.wd5.myworkdayjobs.com"
+    username: Mapped[str] = mapped_column(String(300))
+    secret_enc: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="created")  # created | verified | locked | failed
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")

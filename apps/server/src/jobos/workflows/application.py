@@ -42,6 +42,8 @@ def start_step(app_id: str) -> dict[str, Any]:
         if app.state not in (AppState.queued, AppState.in_progress, AppState.needs_input,
                              AppState.ready_for_review):
             return {"skip": True, "state": app.state}
+        if app.workflow_id and app.workflow_id != DBOS.workflow_id:
+            return {"skip": True, "state": "superseded by a newer run"}
         app.attempt += 1
         app.workflow_id = DBOS.workflow_id or ""
         app.error = ""
@@ -427,7 +429,7 @@ def _review_pages(pages: list[dict[str, Any]], plans: list[dict[str, Any]]) -> l
     return out
 
 
-def enqueue_application(app_id: str, company: str) -> None:
+def enqueue_application(app_id: str, company: str, workflow_id: str) -> None:
     """Enqueue on the apply queue, partitioned per company (one at a time per employer)."""
     from dbos import SetEnqueueOptions, SetWorkflowID
 
@@ -435,7 +437,7 @@ def enqueue_application(app_id: str, company: str) -> None:
 
     apply_queue = DBOS.retrieve_queue(APPLY_QUEUE)
     assert apply_queue is not None
-    with SetWorkflowID(f"apply:{app_id}:{uuid.uuid4().hex[:8]}"), \
+    with SetWorkflowID(workflow_id), \
             SetEnqueueOptions(queue_partition_key=company.lower() or "default"):
         apply_queue.enqueue(application_workflow, app_id)
 
