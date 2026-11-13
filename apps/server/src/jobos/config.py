@@ -32,7 +32,9 @@ class Settings(BaseSettings):
 
     # workflows
     worker_role: str = "all"  # api | worker | all
-    apply_concurrency: int = 2  # applications running at once per worker (≈ runner tabs)
+    # Workflows waiting on a human must not block others, so the queue limit is generous; real throttles are the
+    # per-employer partition (1), pacing/daily caps, and the runner's own tab limit (max_sessions).
+    apply_concurrency: int = 200
     runner_task_timeout_s: int = 300
     intervention_timeout_h: float = 48.0
 

@@ -77,3 +77,32 @@ def test_dry_run_stops_before_submit(e2e_stack) -> None:
     d = st.api.get(f"/api/v1/applications/{app_id}").json()
     assert d["state"] == "skipped" and not d["submitted_at"]
     assert not any(e["to"] == "submitting" for e in d["events"])
+
+
+def test_cancel_wakes_waiting_workflow_and_queue_keeps_moving(e2e_stack) -> None:
+    st = e2e_stack
+
+    def ask_everything(req):
+        out = resolve_handler(req)
+        for f in out["fields"]:
+            f.update(action="ask", value=None, confidence=0.0)
+        return out
+
+    st.fake.on("form.resolve", ask_everything)
+    a1 = st.api.post(f"/api/v1/jobs/{st.add_job('job.html', 'Waiting Engineer', 'Wait Corp')}/apply").json()["application_id"]
+    st.wait(lambda: st.open_iv("missing_answer", a1), a1)
+    st.api.post(f"/api/v1/applications/{a1}/cancel").raise_for_status()
+    assert st.api.get(f"/api/v1/applications/{a1}").json()["state"] == "cancelled"
+    # a new application (same employer partition would be blocked if the waiting workflow kept running)
+    st.fake.on("form.resolve", resolve_handler)
+    a2 = st.api.post(f"/api/v1/jobs/{st.add_job('job.html', 'Next Engineer', 'Wait Corp')}/apply",
+                     json={"dry_run": True}).json()["application_id"]
+
+    def progressed():
+        iv = st.open_iv("missing_answer", a2)
+        if iv:
+            st.api.post(f"/api/v1/interventions/{iv['id']}/answer",
+                        json={"answers": {q["key"]: "80000" for q in iv["payload"]["questions"]}})
+        return st.api.get(f"/api/v1/applications/{a2}").json()["outcome"] == "dry_run_complete"
+
+    st.wait(progressed, a2, timeout=120)

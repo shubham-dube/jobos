@@ -117,5 +117,5 @@ def ask_human(ctr: Counter, candidate_id: str, application_id: str | None, kind:
     hours = get_settings().intervention_timeout_h
     msg = DBOS.recv(topic=iv["topic"], timeout_seconds=hours * 3600)
     if msg is not None:
-        return msg
+        return None if msg.get("cancelled") else msg
     return expire_intervention_step(iv["id"])

@@ -377,9 +377,16 @@ def cancel_application(app_id: str, auth: AuthContext = Depends(owner), s: Sessi
     wf = a.workflow_id
     transition(s, a, AppState.cancelled, actor="user")
     rg.cancel_pending_for_workflow(s, wf)
+    wake: list[tuple[str, str]] = []
     for iv in s.scalars(select(Intervention).where(Intervention.application_id == a.id, Intervention.status == "open")):
         iv.status = "cancelled"
+        wake.append((iv.workflow_id, iv.topic))
     s.commit()
+    for wf_id, topic in wake:  # wake a workflow blocked waiting for a human so it can exit
+        try:
+            signal_workflow(wf_id, {"cancelled": True}, topic)
+        except Exception:
+            pass
     if wf:
         from jobos.workflows.runtime import client
 

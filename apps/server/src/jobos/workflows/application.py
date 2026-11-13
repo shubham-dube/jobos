@@ -76,6 +76,8 @@ def set_state_step(app_id: str, state: str, data: dict[str, Any] | None = None, 
     with session_scope() as s:
         app = s.get(Application, uuid.UUID(app_id))
         assert app is not None
+        if app.state == AppState.cancelled:
+            return
         if error:
             app.error = error[:2000]
         transition(s, app, AppState(state), data=data)
@@ -149,6 +151,8 @@ def finish_step(ctx: dict[str, Any], state: str, pages: list[dict[str, Any]], pl
     with session_scope() as s:
         app = s.get(Application, uuid.UUID(ctx["application_id"]))
         assert app is not None
+        if app.state == AppState.cancelled:
+            return
         if detail.get("error"):
             app.error = str(detail["error"])[:2000]
         transition(s, app, AppState(state), data=detail)
