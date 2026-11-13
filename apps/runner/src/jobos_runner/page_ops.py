@@ -61,6 +61,32 @@ def detect_ats(url: str) -> str:
     return "unknown"
 
 
+_STOP = {"of", "the", "and", "institute", "university", "college", "school", "technology", "information",
+         "indian", "national", "engineering", "science", "sciences", "for", "at", "in", "&"}
+
+
+def distinctive_token(value: str) -> str:
+    """Most distinctive word of a name (usually the place): 'IIIT Raichur' -> 'raichur'."""
+    words = [w for w in norm(re.sub(r"\(.*?\)", " ", value)).split() if w not in _STOP and len(w) > 2]
+    return words[-1] if words else ""
+
+
+def search_queries(value: str) -> list[str]:
+    """Full value, then acronym + place ('IIIT Raichur'), then the place alone."""
+    out = [value]
+    acr = re.search(r"\(([A-Z]{2,})\)", value)
+    place = distinctive_token(value)
+    if acr and place:
+        out.append(f"{acr.group(1)} {place.title()}")
+    if place:
+        out.append(place.title())
+    seen: list[str] = []
+    for q in out:
+        if q and q not in seen:
+            seen.append(q)
+    return seen
+
+
 def norm(s: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9+#]+", " ", s.lower()).split())
 
@@ -89,6 +115,7 @@ class PageOps:
         self.human = human
         self.files_dir = files_dir
         self.suggested: set[str] = set()  # keys whose value was replaced by a site suggestion
+        self.chosen: dict[str, list[str]] = {}  # option texts we actually clicked, per field key
 
     # ------------------------------------------------------------------ helpers
     def _frames(self) -> list[Frame]:
@@ -245,6 +272,13 @@ class PageOps:
             if r.key in self.suggested:
                 r.ok = r.ok and bool(f.current_value)
                 continue
+            if r.ok and r.key in self.chosen:  # verify against what we clicked; sites may show a short form ("+91")
+                got = f.current_value if isinstance(f.current_value, list) else [f.current_value] if f.current_value else []
+                got_text = norm(" ".join(str(g) for g in got))
+                ok = bool(got_text) and all(norm(c) in got_text or got_text in norm(c) for c in self.chosen[r.key])
+                if not ok:
+                    r.ok, r.error = False, f"read back {f.current_value!r}, clicked {self.chosen[r.key]!r}"
+                continue
             if r.ok and not _value_matches(f, fv):
                 r.ok = False
                 r.error = r.error or f"read back {f.current_value!r}"
@@ -280,14 +314,13 @@ class PageOps:
         if widget in ("combobox", "autocomplete") or field.type == FieldType.combobox:
             values = value if isinstance(value, list) else [value]
             truncated = bool(field.locator.get("truncated"))
+            picked: list[str] = []
+            is_location = bool(LOCATION_LABEL.search(field.label))
+            # options unknown at fill time (the fill re-extract does not open dropdowns) => search for the value
+            searchable = truncated or widget == "autocomplete" or not field.options
             for v in values:
-                try:
-                    await self._choose_combobox(loc.first, str(v), [] if truncated else field.options)
-                except ValueError:
-                    if not truncated:
-                        raise
-                    # searchable list without our value: fall back to the site's "Other" entry
-                    await self._choose_combobox(loc.first, "Other", [])
+                picked.append(await self._choose_searchable(loc.first, str(v), field, searchable, is_location))
+            self.chosen[field.key] = picked
             return
         if field.type == FieldType.date and await loc.first.get_attribute("type") == "date":
             await loc.first.fill(str(value))
@@ -348,7 +381,23 @@ class PageOps:
         if await el.is_checked() != desired:
             await el.evaluate("(el, d) => { el.checked = d; el.dispatchEvent(new Event('change', {bubbles:true})); el.dispatchEvent(new Event('click', {bubbles:true})); }", desired)
 
-    async def _choose_combobox(self, loc: Locator, value: str, known: list[str]) -> None:
+    async def _choose_searchable(self, loc: Locator, value: str, field: FormField, searchable: bool,
+                                 is_location: bool) -> str:
+        """Pick an option; for searchable lists try shorter queries, then 'Other'. Never guess a wrong entity."""
+        if not searchable:
+            return await self._choose_combobox(loc, value, field.options)
+        if is_location:
+            return await self._choose_combobox(loc, value, [], allow_first=True)
+        for query in search_queries(value):
+            try:
+                choice = await self._choose_combobox(loc, query, [], must_contain=distinctive_token(value))
+                return choice
+            except ValueError:
+                continue
+        return await self._choose_combobox(loc, "Other", [])
+
+    async def _choose_combobox(self, loc: Locator, value: str, known: list[str], allow_first: bool = False,
+                               must_contain: str = "") -> str:
         target = best_option(value, known) if known else None
         query = target or value
         await self.human.click(loc)
@@ -364,18 +413,24 @@ class PageOps:
             if options:
                 break
         choice = best_option(query, options) if options else None
-        if choice is None and options and not known:
-            choice = options[0]  # autocomplete: first suggestion for our query
+        if choice is None and must_contain:  # e.g. "IIIT Raichur" → accept an option mentioning "Raichur"
+            hits = [o for o in options if must_contain in norm(o)]
+            choice = hits[0] if len(hits) == 1 else (best_option(value, hits) if hits else None)
+        if choice is not None and must_contain and must_contain not in norm(choice):
+            choice = None
+        if choice is None and options and allow_first:
+            choice = options[0]  # free-text autocomplete (e.g. city): first suggestion for our query
         if choice is None:
             await loc.press("Escape")
-            if not known and not options:
-                return  # autocomplete offered nothing (e.g. location service down): keep the typed text
+            if allow_first and not options:
+                return value  # autocomplete offered nothing (e.g. location service down): keep the typed text
             raise ValueError(f"no matching option for {value!r} (saw {options[:5]})")
         opt = self.page.get_by_role("option", name=choice, exact=True)
         if await opt.count() == 0:
             opt = self.page.locator("[class*='select__option'], [class*='option--']").filter(has_text=choice)
         await self.human.click(opt.first)
         await asyncio.sleep(0.3)
+        return choice
 
     # ------------------------------------------------------------------ buttons
     async def click_button(self, kind: str) -> FormPage:

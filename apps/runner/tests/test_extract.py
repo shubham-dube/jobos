@@ -35,3 +35,11 @@ def test_fieldset_checkboxes_group_into_multiselect() -> None:
     assert deg.type == "multiselect" and deg.options == ["Undergraduate/Bachelor's", "Master's", "PhD"]
     assert by_label["I agree to the privacy policy"].type == "checkbox"
     assert len([f for f in fp.fields if f.label == "Degree Type"]) == 1
+
+
+def test_search_queries_for_long_names() -> None:
+    from jobos_runner.page_ops import distinctive_token, search_queries
+
+    v = "Indian Institute of Information Technology (IIIT) Raichur"
+    assert distinctive_token(v) == "raichur"
+    assert search_queries(v) == [v, "IIIT Raichur", "Raichur"]
