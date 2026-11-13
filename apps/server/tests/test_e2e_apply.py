@@ -72,7 +72,11 @@ def test_full_application_flow(tmp_path: Path) -> None:
     from jobos.db.models import Company, Job, SiteRecipe
     from jobos.domain.settings import ActiveHours, CandidateSettings, Pacing
     from jobos.llm import get_gateway
-    from jobos.services.candidates import get_or_create_default_candidate, save_candidate_settings, save_profile
+    from jobos.services.candidates import (
+        get_or_create_default_candidate,
+        save_candidate_settings,
+        save_profile,
+    )
     from jobos_common.profile import MasterProfile
 
     site, httpd = _serve_static(FIXTURES / "fake_ats")

@@ -181,9 +181,17 @@
     let currentValue = el.value;
     if (tag === "SELECT") currentValue = el.selectedIndex >= 0 && el.options[el.selectedIndex] && el.options[el.selectedIndex].value !== "" ? clean(el.options[el.selectedIndex].text) : "";
     if (role === "combobox") {
-      const container = el.closest("[class*=select__control],[class*=control],[class*=select]");
-      const sv = container ? container.querySelector("[class*=single-value],[class*=singleValue]") : null;
-      currentValue = sv ? visibleText(sv) : el.value;
+      // react-select & co. render the chosen value next to the input, inside the same control
+      currentValue = el.value;
+      let node = el.parentElement;
+      for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+        if (node.querySelectorAll("[role=combobox]").length > 1) break; // reached a shared container
+        const chosen = node.querySelectorAll("[class*=single-value],[class*=singleValue],[class*=multi-value__label],[class*=multiValue] [class*=label]");
+        if (chosen.length) {
+          currentValue = Array.from(chosen).map((c) => visibleText(c)).filter(Boolean).join(" | ");
+          break;
+        }
+      }
     }
     if (type === "file") {
       const box = el.closest("[class*=field],[class*=upload],[class*=file],div");

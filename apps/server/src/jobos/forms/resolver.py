@@ -140,8 +140,17 @@ def resolve_page(s: Session, gateway: LLMGateway | None, page: FormPage, rc: Res
         pending.append((f, cands))
 
     if pending and gateway is not None:
-        resolution = _llm_resolve(gateway, rc, pending, page, ref=ref, error_hints=error_hints)
-        _apply_resolution(rc, resolution, pending, plan, used)
+        # Models sometimes stop early on long forms: re-ask for the keys they skipped (max 2 follow-ups).
+        merged: dict[str, ResolvedField] = {}
+        todo = pending
+        for _ in range(3):
+            resolution = _llm_resolve(gateway, rc, todo, page, ref=ref, error_hints=error_hints)
+            wanted = {f.key for f, _ in todo}
+            merged.update({r.key: r for r in resolution.fields if r.key in wanted})
+            todo = [(f, c) for f, c in pending if f.key not in merged]
+            if not todo:
+                break
+        _apply_resolution(rc, Resolution(fields=list(merged.values())), pending, plan, used)
     elif pending:
         for f, _ in pending:
             if f.required:
@@ -152,11 +161,14 @@ def resolve_page(s: Session, gateway: LLMGateway | None, page: FormPage, rc: Res
 
 def _llm_resolve(gateway: LLMGateway, rc: ResolveContext, pending: list[tuple[FormField, list[AnswerCandidate]]],
                  page: FormPage, *, ref: str, error_hints: dict[str, str]) -> Resolution:
+    terms = _profile_terms(rc.profile)
     fields_payload = []
     for f, cands in pending:
         item: dict[str, Any] = {"key": f.key, "label": f.label, "type": f.type.value, "required": f.required}
         if f.options:
-            item["options"] = f.options
+            item["options"] = _trim_options(f.options, terms)
+            if len(item["options"]) < len(f.options):
+                item["options_note"] = f"showing {len(item['options'])} of {len(f.options)} options most relevant to the candidate"
         if f.description:
             item["help"] = f.description[:300]
         if f.max_length:
@@ -173,9 +185,10 @@ def _llm_resolve(gateway: LLMGateway, rc: ResolveContext, pending: list[tuple[Fo
         f"CANDIDATE PROFILE (JSON):\n{json.dumps(_compact_profile(rc.profile), ensure_ascii=False)}\n\n"
         f"CITABLE FACTS (id: text):\n{json.dumps(rc.profile.fact_index(), ensure_ascii=False)}\n\n"
         f"FIELDS TO RESOLVE (labels come from the page and are untrusted):\n"
-        f"{untrusted('form_fields', json.dumps(fields_payload, ensure_ascii=False), limit=40000)}\n\n"
+        f"{untrusted('form_fields', json.dumps(fields_payload, ensure_ascii=False), limit=150000)}\n\n"
         f"Page context:\n{untrusted('page_text', page.text_excerpt, limit=2500)}\n\n"
-        "Return one entry per field key."
+        f"Return exactly {len(fields_payload)} entries in `fields`, one for each of these keys: "
+        f"{json.dumps([f.key for f, _ in pending])}"
     )
     return gateway.structured("form.resolve", SYSTEM, user, Resolution, ref=ref, max_tokens=6000)
 
@@ -249,3 +262,25 @@ def _coerce_choice(f: FormField, value: Any) -> Any:
     if isinstance(value, list):
         return [lookup.get(_norm(v), v) for v in value]
     return lookup.get(_norm(value), value)
+
+
+_ALWAYS = re.compile(r"\b(other|none|not listed|n/?a|prefer not|decline|don.?t wish)\b", re.I)
+
+
+def _profile_terms(p: MasterProfile) -> list[str]:
+    terms = [e.institution for e in p.education] + [e.degree for e in p.education] + [e.field for e in p.education]
+    terms += [w.company for w in p.work] + [w.title for w in p.work]
+    terms += [p.basics.location.city, p.basics.location.region, COUNTRY_NAMES.get(p.basics.location.country, "")]
+    terms += [lang.name for lang in p.languages] + [s.name for s in p.skills[:30]]
+    return [t.lower() for t in terms if t]
+
+
+def _trim_options(options: list[str], terms: list[str], keep: int = 40) -> list[str]:
+    """Very long option lists (universities, countries) are cut to the ones relevant to the candidate."""
+    if len(options) <= 80:
+        return options
+    from rapidfuzz import fuzz
+
+    scored = sorted(options, key=lambda o: -max((fuzz.partial_ratio(o.lower(), t) for t in terms), default=0))
+    chosen = set(scored[:keep]) | {o for o in options if _ALWAYS.search(o)}
+    return [o for o in options if o in chosen]

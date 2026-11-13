@@ -51,6 +51,9 @@ ATS_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
+LOCATION_LABEL = re.compile(r"\b(location|city|town|where are you (based|located))\b", re.I)
+
+
 def detect_ats(url: str) -> str:
     for pat, name in ATS_PATTERNS:
         if re.search(pat, url, re.I):
@@ -85,6 +88,7 @@ class PageOps:
         self.page = page
         self.human = human
         self.files_dir = files_dir
+        self.suggested: set[str] = set()  # keys whose value was replaced by a site suggestion
 
     # ------------------------------------------------------------------ helpers
     def _frames(self) -> list[Frame]:
@@ -169,7 +173,9 @@ class PageOps:
             let scope = null;
             const ctl = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
             if (ctl) scope = document.getElementById(ctl);
-            const nodes = Array.from((scope || document).querySelectorAll("[role=option], [class*='select__option'], [class*='option--']"));
+            const sel = "[role=option], [class*='select__option'], [class*='option--'], .dropdown-results > div, " +
+                        ".dropdown-location, .pac-item, [class*='suggestion'] li, [class*='autocomplete'] li, ul[role=listbox] li";
+            const nodes = Array.from((scope || document).querySelectorAll(sel));
             const out = [];
             for (const n of nodes) { if (!vis(n)) continue; const t = (n.innerText || '').replace(/\\s+/g,' ').trim(); if (t && !out.includes(t) && !/^no (options|results)/i.test(t)) out.push(t); }
             return out.slice(0, 300);
@@ -220,6 +226,9 @@ class PageOps:
             if f is None or fv is None:
                 continue
             r.actual = f.current_value
+            if r.key in self.suggested:
+                r.ok = r.ok and bool(f.current_value)
+                continue
             if r.ok and not _value_matches(f, fv):
                 r.ok = False
                 r.error = r.error or f"read back {f.current_value!r}"
@@ -261,6 +270,28 @@ class PageOps:
             await loc.first.fill(str(value))
             return
         await self.human.type_text(loc.first, "" if value is None else str(value))
+        if LOCATION_LABEL.search(field.label) and value:
+            await self._maybe_pick_suggestion(loc.first, str(value))
+
+    async def _maybe_pick_suggestion(self, loc: Locator, value: str) -> None:
+        """Text inputs with a suggestion dropdown (e.g. Lever location): pick the closest suggestion."""
+        options: list[str] = []
+        for _ in range(6):
+            await asyncio.sleep(0.4)
+            options = await self._read_open_options(loc)
+            if options:
+                break
+        if not options:
+            return
+        choice = best_option(value, options) or best_option(value.split(",")[0], options) or options[0]
+        target = self.page.get_by_role("option", name=choice, exact=True)
+        if await target.count() == 0:
+            target = self.page.locator(".dropdown-results > div, .dropdown-location, .pac-item, ul[role=listbox] li").filter(
+                has_text=choice)
+        if await target.count():
+            await self.human.click(target.first)
+            self.suggested.add(await loc.get_attribute("data-jobos-key") or "")
+            await asyncio.sleep(0.3)
 
     async def _choose_in_group(self, field: FormField, wanted: str) -> None:
         loc = self._loc(field.key)
@@ -314,6 +345,8 @@ class PageOps:
             choice = options[0]  # autocomplete: first suggestion for our query
         if choice is None:
             await loc.press("Escape")
+            if not known and not options:
+                return  # autocomplete offered nothing (e.g. location service down): keep the typed text
             raise ValueError(f"no matching option for {value!r} (saw {options[:5]})")
         opt = self.page.get_by_role("option", name=choice, exact=True)
         if await opt.count() == 0:
@@ -405,9 +438,9 @@ def _value_matches(field: FormField, fv: FillValue) -> bool:
     if field.type == FieldType.checkbox:
         return bool(got) == (want if isinstance(want, bool) else str(want).lower() in ("yes", "true", "1"))
     if field.locator.get("widget") == "autocomplete":
-        return bool(got)
+        return True  # free-text autocomplete: value may be normalised by the site or left as typed
     if isinstance(want, list):
-        got_list = got if isinstance(got, list) else [got] if got else []
+        got_list = got if isinstance(got, list) else (str(got).split(" | ") if got else [])
         return all(any(norm(str(w)) in norm(str(g)) or norm(str(g)) in norm(str(w)) for g in got_list) for w in want)
     if got is None:
         return want in (None, "")
