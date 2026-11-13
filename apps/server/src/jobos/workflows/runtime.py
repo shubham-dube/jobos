@@ -23,7 +23,7 @@ def launch(run_schedules: bool = True) -> DBOS:
     if _dbos is not None:
         return _dbos
     # import modules so their workflows/steps register before launch
-    from . import application, discovery, inbox  # noqa: F401
+    from . import application, discovery, inbox, watchdog  # noqa: F401
 
     config: DBOSConfig = {"name": "jobos", "system_database_url": system_db_url(), "log_level": "INFO"}
     _dbos = DBOS(config=config)
@@ -35,10 +35,12 @@ def launch(run_schedules: bool = True) -> DBOS:
     if run_schedules:
         from .discovery import discovery_tick
         from .inbox import inbox_tick
+        from .watchdog import watchdog_tick
 
         DBOS.apply_schedules([
             {"schedule_name": "discovery-tick", "workflow_fn": discovery_tick, "schedule": "*/15 * * * *"},
             {"schedule_name": "inbox-tick", "workflow_fn": inbox_tick, "schedule": "*/5 * * * *"},
+            {"schedule_name": "watchdog-tick", "workflow_fn": watchdog_tick, "schedule": "*/5 * * * *"},
         ])
     return _dbos
 
