@@ -1,0 +1,11 @@
+# Secret scanning config (CI: gitleaks). Extends the default rules.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets: test-only dummy key from early history, dev placeholders"
+regexes = [
+  '''test-secret-key-0123456789abcdef0123''',
+  '''dev-secret-key-change-me-32-bytes-min!!''',
+  '''change-me-32-plus-random-characters-here''',
+]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import tempfile
 
 TEST_DB = os.environ.get("JOBOS_TEST_DATABASE_URL", "postgresql+psycopg://jobos:jobos@localhost:5432/jobos_test")
@@ -12,7 +13,7 @@ os.environ.update({
     "JOBOS_LLM_FAKE": "1",
     "JOBOS_DATA_DIR": tempfile.mkdtemp(prefix="jobos-test-"),
     "JOBOS_API_TOKEN": "test-token",
-    "JOBOS_SECRET_KEY": "test-secret-key-0123456789abcdef0123",
+    "JOBOS_SECRET_KEY": secrets.token_hex(32),  # random per test run
     "JOBOS_INTERVENTION_TIMEOUT_H": "1",
 })
 
