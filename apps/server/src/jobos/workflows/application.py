@@ -242,6 +242,23 @@ def allow_account_creation_step(candidate_id: str) -> None:
 
 
 @DBOS.step()
+def verification_since_step() -> str:
+    return (datetime.now(UTC) - timedelta(minutes=2)).isoformat()
+
+
+@DBOS.step()
+def find_verification_link_step(ctx: dict[str, Any], page_url: str, since_iso: str) -> str | None:
+    from urllib.parse import urlparse
+
+    from jobos.services.verification import find_verification_link
+
+    with session_scope() as s:
+        return find_verification_link(s, get_gateway(), uuid.UUID(ctx["candidate_id"]),
+                                      host=(urlparse(page_url).hostname or ""), company=ctx["company"],
+                                      since=datetime.fromisoformat(since_iso))
+
+
+@DBOS.step()
 def set_outcome_step(app_id: str, outcome: str) -> None:
     with session_scope() as s:
         app = s.get(Application, uuid.UUID(app_id))
@@ -480,6 +497,19 @@ def _authenticate(ctx, ctr, runner, page, tried: list[str]) -> tuple[dict[str, A
         return page, f"auth failed: {res.get('error')}"
     new_page = res["data"]["page"]
     if res["data"].get("verify_email"):
+        # 1) try the inbox: open the employer's verification link in a side tab, then come back
+        since = verification_since_step()
+        for _ in range(10):  # ~5 minutes
+            link = find_verification_link_step(ctx, new_page.get("url", ""), since)
+            if link:
+                side = runner("verify-open", TaskType.open_page, {"url": link}, timeout_s=120)
+                if side.get("ok"):
+                    r2 = runner("after-verify", TaskType.open_page, {"url": ctx["apply_url"]})
+                    if r2.get("ok"):
+                        return r2["data"]["page"], ""
+                break
+            DBOS.sleep(30)
+        # 2) fall back to the human
         ans = ask_human(ctr, ctx["candidate_id"], ctx["application_id"], "verify_email",
                         f"Verify your email for {ctx['company']}",
                         {"job": _job(ctx), "email": plan.get("email", ""),

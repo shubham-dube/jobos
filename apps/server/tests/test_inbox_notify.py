@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage as MimeMessage
 
 import httpx
@@ -196,3 +196,28 @@ def test_job_alert_email_becomes_jobs(session, monkeypatch) -> None:
     assert session.scalar(select(Company).where(Company.ats == "lever", Company.board_token == "newco-test"))
     # idempotent
     assert ingest_job_alert(session, LLMGateway({"fake": fake}, default_route="fake:x"), "Jobs", "...", "x") == 0
+
+
+def test_find_verification_link(session) -> None:
+    from jobos.db.models import EmailMessage
+    from jobos.services.verification import find_verification_link
+
+    cand = get_or_create_default_candidate(session)
+    mb = Mailbox(candidate_id=cand.id, label="Zoho", host="imap.zoho.in", username="me@example.com",
+                 secret_enc=encrypt("x"))
+    session.add(mb)
+    session.flush()
+    now = datetime.now(UTC)
+    session.add_all([
+        EmailMessage(mailbox_id=mb.id, message_id="a", from_addr="noreply@other.com", subject="Verify your account",
+                     received_at=now, category="verification_code",
+                     extracted={"links": ["https://other.com/verify?x=1"]}),
+        EmailMessage(mailbox_id=mb.id, message_id="b", from_addr="nvidia@myworkday.com",
+                     subject="NVIDIA - Verify your candidate account", received_at=now, category="verification_code",
+                     extracted={"links": ["https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/activate/abc",
+                                          "https://www.workday.com/privacy"]}),
+    ])
+    session.flush()
+    link = find_verification_link(session, None, cand.id, host="nvidia.wd5.myworkdayjobs.com", company="NVIDIA",
+                                  since=now - timedelta(minutes=5), sync=False)
+    assert link == "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/activate/abc"
