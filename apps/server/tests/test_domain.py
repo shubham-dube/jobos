@@ -95,3 +95,16 @@ def test_legitimacy_scores() -> None:
     scam, reasons = legitimacy(source="other", ats="unknown", posted_at=None,
                                description="Pay a registration fee and contact us on Telegram " + "x" * 300)
     assert good >= 90 and scam < 20 and any("Scam" in r for r in reasons)
+
+
+def test_application_deadline_parsing() -> None:
+    from jobos.matching.rules import application_deadline
+
+    d = application_deadline("Location New York Deadline to Apply October 25, 2026 at 5:00 PM UTC Compensation")
+    assert d is not None and (d.year, d.month, d.day) == (2026, 10, 25)
+    assert application_deadline("No dates here") is None
+    f = SearchFilters(keywords_any=["engineer"])
+    elig = assess_eligibility(PROFILE, ["IN"], "onsite", "", ["Pune"])
+    r = apply_filters(f, title="Backend Engineer", company="X", countries=["IN"], remote_type="onsite",
+                      posted_at=None, eligibility=elig, deadline=d)
+    assert not r.passed and "deadline" in r.reasons[0]

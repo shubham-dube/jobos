@@ -455,13 +455,18 @@ class PageOps:
         await self.human.pause(0.6, 1.5)
         await self.human.click(self._frame_for_key(key).locator(f'[data-jobos-button="{key}"]').first)
         after: FormPage | None = None
-        for _ in range(20):  # up to ~20s for confirmation
+        for _ in range(60):  # up to ~60s: some ATSs run spam checks/uploads before confirming
             await asyncio.sleep(1.0)
             with contextlib.suppress(Exception):
                 after = await self.extract(page.page_index, harvest=False)
                 if after.kind in (PageKind.confirmation, PageKind.captcha):
                     break
                 if after.errors and after.kind == PageKind.form:
+                    break
+                busy = await self.page.evaluate(
+                    "() => !!document.querySelector('[aria-busy=true], button[disabled][type=submit], "
+                    "[class*=spinner], [class*=loading]')")
+                if not busy and after.kind != PageKind.form:
                     break
         if after is None:
             after = await self.extract(page.page_index, harvest=False)

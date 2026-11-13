@@ -16,7 +16,14 @@ from sqlalchemy.orm import Session
 from jobos.db.models import Company, Document, Job, Match, SearchProfile
 from jobos.domain.settings import SearchFilters
 from jobos.llm import LLMGateway
-from jobos.matching.rules import Eligibility, apply_filters, assess_eligibility, legitimacy, prescore
+from jobos.matching.rules import (
+    Eligibility,
+    application_deadline,
+    apply_filters,
+    assess_eligibility,
+    legitimacy,
+    prescore,
+)
 from jobos.matching.scorer import candidate_summary, score_job
 from jobos.services.candidates import get_profile
 from jobos.sources.ats import SOURCES, SourceError
@@ -149,7 +156,8 @@ def evaluate_jobs(s: Session, gateway: LLMGateway | None, search_profile: Search
                 hydrate_job(s, job)
         elig = assess_eligibility(profile, job.countries, job.remote_type, job.description_text, job.locations)
         fr = apply_filters(filters, title=job.title, company=job.company_name, countries=job.countries,
-                           remote_type=job.remote_type, posted_at=job.posted_at, eligibility=elig)
+                           remote_type=job.remote_type, posted_at=job.posted_at, eligibility=elig,
+                           deadline=application_deadline(job.description_text))
         job.seniority = fr.seniority
         legit, legit_reasons = legitimacy(source=job.source, ats=job.ats, posted_at=job.posted_at,
                                           description=job.description_text)

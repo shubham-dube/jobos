@@ -85,6 +85,24 @@ def assess_eligibility(profile: MasterProfile, countries: list[str], remote_type
     return Eligibility(True, "sponsorship_unknown", ["Abroad; sponsorship not mentioned"])
 
 
+_DEADLINE = re.compile(r"(?:deadline to apply|application deadline|apply by|applications close[sd]?(?: on)?)[:\s]+"
+                       r"([A-Z][a-z]+ \d{1,2},? \d{4}|\d{1,2} [A-Z][a-z]+,? \d{4}|\d{4}-\d{2}-\d{2})", re.I)
+
+
+def application_deadline(description: str) -> datetime | None:
+    """Explicit 'apply by' dates in postings (e.g. Ashby's 'Deadline to Apply October 25, 2026')."""
+    m = _DEADLINE.search(description[:8000])
+    if not m:
+        return None
+    raw = m.group(1).replace(",", "")
+    for fmt in ("%B %d %Y", "%b %d %Y", "%d %B %Y", "%d %b %Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    return None
+
+
 @dataclass
 class FilterResult:
     passed: bool
@@ -93,7 +111,8 @@ class FilterResult:
 
 
 def apply_filters(f: SearchFilters, *, title: str, company: str, countries: list[str], remote_type: str,
-                  posted_at: datetime | None, eligibility: Eligibility) -> FilterResult:
+                  posted_at: datetime | None, eligibility: Eligibility,
+                  deadline: datetime | None = None) -> FilterResult:
     reasons: list[str] = []
     t = title.lower()
     if f.keywords_any and not any(k.lower() in t for k in f.keywords_any):
@@ -118,6 +137,8 @@ def apply_filters(f: SearchFilters, *, title: str, company: str, countries: list
         age = (datetime.now(UTC) - posted_at).days
         if age > f.posted_within_days:
             reasons.append(f"posted {age} days ago")
+    if deadline is not None and deadline < datetime.now(UTC):
+        reasons.append(f"application deadline passed ({deadline:%d %b %Y})")
     if not eligibility.eligible and f.require_visa_friendly_abroad:
         reasons.append("not eligible: " + "; ".join(eligibility.reasons))
     return FilterResult(not reasons, reasons, sen)
