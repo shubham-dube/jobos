@@ -37,6 +37,27 @@ def test_fieldset_checkboxes_group_into_multiselect() -> None:
     assert len([f for f in fp.fields if f.label == "Degree Type"]) == 1
 
 
+@pytest.mark.skipif(not CHROME, reason="no Chromium")
+def test_file_upload_required_from_container_label() -> None:
+    """Greenhouse hides the input's own label ("Attach"); the asterisk lives on the container label."""
+    from playwright.async_api import async_playwright
+
+    from jobos_runner.human import Human
+    from jobos_runner.page_ops import PageOps
+
+    async def run():
+        async with async_playwright() as p:
+            b = await p.chromium.launch(executable_path=CHROME)
+            pg = await b.new_page()
+            await pg.goto((FIX / "uploads.html").as_uri())
+            fp = await PageOps(pg, Human(pg, slow=False), Path(".")).extract()
+            await b.close()
+            return fp
+
+    req = {f.label: f.required for f in asyncio.run(run()).fields if f.type == "file"}
+    assert req == {"Resume/CV": True, "Cover Letter": False, "Please provide a recent transcript": True}
+
+
 def test_search_queries_for_long_names() -> None:
     from jobos_runner.page_ops import distinctive_token, search_queries
 

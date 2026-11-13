@@ -21,13 +21,18 @@
   const LABELISH = "label, legend, .application-label, [class*='label' i], [class*='Label'], [class*='question-title' i], h3, h4";
 
   function containerLabel(el, exclude) {
+    const n = containerLabelNode(el, exclude);
+    return n ? visibleText(n) : "";
+  }
+
+  function containerLabelNode(el, exclude) {
     let node = el.parentElement;
     for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
       const cls = (node.className && node.className.toString()) || "";
       if (node.tagName === "FIELDSET" || CONTAINER_RE.test(cls) || node.getAttribute("role") === "group" ||
           node.getAttribute("role") === "radiogroup") {
         const legend = node.tagName === "FIELDSET" ? node.querySelector(":scope > legend") : null;
-        if (legend && visibleText(legend)) return visibleText(legend);
+        if (legend && visibleText(legend)) return legend;
         const candidates = Array.from(node.querySelectorAll(LABELISH)).filter((l) => !exclude || !exclude.includes(l));
         for (const c of candidates) {
           // skip labels that belong to individual options
@@ -36,11 +41,11 @@
           if (forEl && (forEl.type === "radio" || forEl.type === "checkbox") && node.querySelectorAll("input[type=radio],input[type=checkbox]").length > 1) continue;
           if (c.querySelector("input[type=radio],input[type=checkbox]")) continue;
           const t = visibleText(c);
-          if (t && t.length < 600) return t;
+          if (t && t.length < 600) return c;
         }
       }
     }
-    return "";
+    return null;
   }
 
   function labelFor(el) {
@@ -76,11 +81,19 @@
   }
 
   function rawLabelText(el) {
-    if (el.labels && el.labels.length) return el.labels[0].innerText || "";
+    if (el.labels && el.labels.length) {
+      const t = el.labels[0].innerText || el.labels[0].textContent || "";
+      // visually-hidden "Attach"/"Upload" labels on file inputs: the real (asterisked) label is in the container
+      if (!/^\s*(attach|upload|browse)\s*$/i.test(t)) return t;
+    }
     if (el.getAttribute("aria-labelledby")) {
       return (el.getAttribute("aria-labelledby").split(/\s+/).map((id) => {
         const n = document.getElementById(id); return n ? n.innerText : "";
       }).join(" "));
+    }
+    if (el.type === "file") {
+      const c = containerLabelNode(el);
+      return c ? (c.innerText || c.textContent || "") : "";
     }
     return "";
   }

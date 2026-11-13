@@ -393,6 +393,11 @@ def application_workflow(app_id: str) -> str:
         confirmed = after.get("ok") and after["data"]["page"].get("kind") == "confirmation"
         state = AppState.submitted.value if confirmed else AppState.uncertain.value
         detail = {"note": "captcha solved by user" if ans else "captcha not solved"}
+    elif sub.page and sub.page.kind == PageKind.form and sub.page.errors:
+        # The site's own validation rejected the click and the form is still on screen: nothing was sent,
+        # so this is a retryable failure, not an "uncertain" submission.
+        state, detail = AppState.failed.value, {"note": "form validation blocked submit (not sent)",
+                                                "errors": sub.page.errors[:5], "url": sub.final_url}
     else:
         errors = sub.page.errors if sub.page else []
         state, detail = AppState.uncertain.value, {"note": "submit did not complete", "errors": errors[:5]}
