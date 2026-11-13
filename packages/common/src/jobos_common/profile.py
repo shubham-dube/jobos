@@ -218,21 +218,35 @@ class MasterProfile(BaseModel):
                 return wa
         return WorkAuthorization(country=country, status="none", needs_sponsorship=True)
 
-    def total_experience_years(self) -> float:
-        """Rough years of professional experience (excludes founder/side items with no dates)."""
-        months = 0
+    def total_experience_years(self, kinds: tuple[str, ...] = ("full_time", "internship", "part_time", "contract")) -> float:
+        """Years of paid professional experience; overlapping roles are merged, founder/volunteer roles excluded."""
+        from datetime import date
+
+        today = date.today()
+        now = today.year * 12 + today.month
+        spans = []
         for w in self.work:
+            if w.employment_type and w.employment_type not in kinds:
+                continue
             s = _ym(w.start)
-            e = _ym(w.end) if w.end else None
             if s is None:
                 continue
-            if e is None:
-                from datetime import date
-
-                today = date.today()
-                e = today.year * 12 + today.month
-            months += max(0, e - s)
+            e = _ym(w.end) if w.end else now
+            spans.append((s, max(s, e or now)))
+        months, cur_s, cur_e = 0, None, None
+        for s, e in sorted(spans):
+            if cur_e is None or s > cur_e:
+                if cur_e is not None:
+                    months += cur_e - cur_s
+                cur_s, cur_e = s, e
+            else:
+                cur_e = max(cur_e, e)
+        if cur_e is not None:
+            months += cur_e - cur_s
         return round(months / 12, 1)
+
+    def is_student(self) -> bool:
+        return any(e.expected for e in self.education)
 
 
 def _ym(value: str | None) -> int | None:

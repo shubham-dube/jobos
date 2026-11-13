@@ -23,13 +23,17 @@ Be calibrated and honest:
 - 40-64: stretch.
 - 0-39: poor fit (wrong field, far too senior, hard requirements missing).
 Judge seniority against the candidate's real experience (internships count, but they are a student/new grad if so).
+Score ONLY skills, experience level and domain fit. Do NOT reduce the score for location, relocation, visa or
+work authorization: that is assessed separately and shown next to your score.
+Founder experience shows ownership and breadth but does not count as years of employment.
 Never invent candidate skills; use only the candidate summary provided."""
 
 
 def candidate_summary(p: MasterProfile, resume_labels: list[str]) -> str:
     lines = [
         f"Name: {p.basics.full_name}. Headline: {p.basics.headline}",
-        f"Location: {p.basics.location.city}, {p.basics.location.country}. Experience ≈ {p.total_experience_years()} yrs",
+        f"Location: {p.basics.location.city}, {p.basics.location.country}. Paid experience ≈ {p.total_experience_years()} yrs"
+        + (" (internships; student, graduating " + next((e.end for e in p.education if e.expected), "") + ")" if p.is_student() else ""),
         "Education: " + "; ".join(f"{e.degree} {e.field}, {e.institution} ({e.end}{', expected' if e.expected else ''})"
                                   for e in p.education[:2]),
         "Work: " + "; ".join(f"{w.title} @ {w.company} ({w.start}–{w.end or 'now'}, {w.employment_type})"

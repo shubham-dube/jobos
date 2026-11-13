@@ -137,6 +137,11 @@ def _process(s: Session, gateway: LLMGateway | None, mailbox: Mailbox, msg: Mess
     stats["classified"] += 1
     row.category = verdict.category if verdict.category in CATEGORIES else "other"
     row.extracted = verdict.model_dump()
+    if row.category == "job_alert":
+        from jobos.services.job_alerts import ingest_job_alert
+
+        stats["alert_jobs"] = stats.get("alert_jobs", 0) + ingest_job_alert(s, gateway, subject, body, from_addr)
+        return
     app = link_application(s, mailbox.candidate_id, verdict.company or from_addr.split("@")[-1], verdict.job_title)
     if app is None:
         return

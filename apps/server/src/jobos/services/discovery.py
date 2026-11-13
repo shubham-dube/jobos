@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from jobos.db.models import Company, Document, Job, Match, SearchProfile
 from jobos.domain.settings import SearchFilters
 from jobos.llm import LLMGateway
-from jobos.matching.rules import apply_filters, assess_eligibility, legitimacy, prescore
+from jobos.matching.rules import Eligibility, apply_filters, assess_eligibility, legitimacy, prescore
 from jobos.matching.scorer import candidate_summary, score_job
 from jobos.services.candidates import get_profile
 from jobos.sources.ats import SOURCES, SourceError
@@ -133,7 +133,7 @@ def evaluate_jobs(s: Session, gateway: LLMGateway | None, search_profile: Search
     already = select(Match.job_id).where(Match.candidate_id == cand_id)
     jobs = s.scalars(
         select(Job).where(Job.closed_at.is_(None), Job.id.not_in(already), Job.ats.in_(filters.sources))
-        .order_by(Job.posted_at.desc().nulls_last()).limit(5000)
+        .order_by(Job.posted_at.desc().nulls_last()).limit(50000)
     ).all()
     to_score: list[tuple[float, Job, Match]] = []
     seen_fp = set(s.scalars(select(Job.fingerprint).join(Match, Match.job_id == Job.id)
@@ -141,6 +141,12 @@ def evaluate_jobs(s: Session, gateway: LLMGateway | None, search_profile: Search
     targets = profile.preferences.target_roles or filters.keywords_any
     for job in jobs:
         stats.considered += 1
+        if (job.raw or {}).get("needs_hydrate"):
+            pre = apply_filters(filters, title=job.title, company=job.company_name, countries=job.countries,
+                                remote_type=job.remote_type, posted_at=job.posted_at,
+                                eligibility=Eligibility(True, "unknown"))
+            if pre.passed:
+                hydrate_job(s, job)
         elig = assess_eligibility(profile, job.countries, job.remote_type, job.description_text, job.locations)
         fr = apply_filters(filters, title=job.title, company=job.company_name, countries=job.countries,
                            remote_type=job.remote_type, posted_at=job.posted_at, eligibility=elig)
@@ -157,7 +163,7 @@ def evaluate_jobs(s: Session, gateway: LLMGateway | None, search_profile: Search
                   legitimacy=legit, legitimacy_reasons=legit_reasons)
         s.add(m)
         if fr.passed:
-            to_score.append((prescore(job.title, targets, elig.status, legit), job, m))
+            to_score.append((prescore(job.title, targets, elig.status, legit, profile.is_student()), job, m))
         else:
             stats.filtered += 1
     s.flush()
@@ -189,3 +195,21 @@ def title_similar(a: str, b: str) -> bool:
     from rapidfuzz import fuzz
 
     return fuzz.token_set_ratio(normalize_title(a), normalize_title(b)) >= 90
+
+
+def hydrate_job(s: Session, job: Job) -> bool:
+    """Fetch the full description for sources whose list API omits it (Workday, SmartRecruiters, Workable)."""
+    source_cls = SOURCES.get(job.source)
+    company = s.get(Company, job.company_id) if job.company_id else None
+    if source_cls is None or company is None or not hasattr(source_cls, "hydrate"):
+        return False
+    try:
+        extra = source_cls().hydrate(company.board_token, job.raw or {})  # type: ignore[attr-defined]
+    except Exception as exc:
+        log.warning("hydrate_failed", job=str(job.id), error=str(exc))
+        return False
+    for key, value in extra.items():
+        if value:
+            setattr(job, key, value)
+    job.raw = {**(job.raw or {}), "needs_hydrate": False}
+    return True

@@ -553,5 +553,100 @@
 "ats": "ashby",
 "board_token": "writer",
 "name": "Writer"
+},
+{
+"ats": "greenhouse",
+"board_token": "slice",
+"name": "Slice"
+},
+{
+"ats": "greenhouse",
+"board_token": "observeai",
+"name": "Observe.AI"
+},
+{
+"ats": "greenhouse",
+"board_token": "rubrik",
+"name": "Rubrik"
+},
+{
+"ats": "lever",
+"board_token": "mindtickle",
+"name": "MindTickle"
+},
+{
+"ats": "ashby",
+"board_token": "sarvam",
+"name": "Sarvam"
+},
+{
+"ats": "ashby",
+"board_token": "composio",
+"name": "Composio"
+},
+{
+"ats": "ashby",
+"board_token": "atlan",
+"name": "Atlan"
+},
+{
+"ats": "ashby",
+"board_token": "plane",
+"name": "Plane"
+},
+{
+"ats": "ashby",
+"board_token": "ema",
+"name": "Ema"
+},
+{
+"ats": "ashby",
+"board_token": "mintlify",
+"name": "Mintlify"
+},
+{
+"ats": "ashby",
+"board_token": "unify",
+"name": "Unify"
+},
+{
+"ats": "ashby",
+"board_token": "bolna",
+"name": "Bolna"
+},
+{
+"ats": "ashby",
+"board_token": "spotdraft",
+"name": "SpotDraft"
+},
+{
+"ats": "workday",
+"board_token": "nvidia.wd5.myworkdayjobs.com|nvidia|NVIDIAExternalCareerSite",
+"name": "NVIDIA"
+},
+{
+"ats": "workday",
+"board_token": "salesforce.wd12.myworkdayjobs.com|salesforce|External_Career_Site",
+"name": "Salesforce"
+},
+{
+"ats": "smartrecruiters",
+"board_token": "ServiceNow",
+"name": "ServiceNow"
+},
+{
+"ats": "smartrecruiters",
+"board_token": "CERN",
+"name": "CERN"
+},
+{
+"ats": "smartrecruiters",
+"board_token": "BoschGroup",
+"name": "Bosch"
+},
+{
+"ats": "workable",
+"board_token": "huggingface",
+"name": "Hugging Face"
 }
 ]

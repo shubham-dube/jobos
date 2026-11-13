@@ -173,3 +173,26 @@ def test_whatsapp_webhook_signature_and_reply(session, monkeypatch) -> None:
     v = client.get("/webhooks/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": settings.whatsapp_verify_token,
                                                  "hub.challenge": "42"})
     assert v.text == "42"
+
+
+def test_job_alert_email_becomes_jobs(session, monkeypatch) -> None:
+    from sqlalchemy import select
+
+    from jobos.services.job_alerts import ingest_job_alert
+
+    fake = FakeProvider()
+    fake.on("email.job_alert", lambda req: {"jobs": [
+        {"title": "Backend Engineer", "company": "Acme Pay", "location": "Bengaluru, India",
+         "url": "https://www.linkedin.com/comm/jobs/view/4012345678/?trackingId=abc&refId=x"},
+        {"title": "Platform Engineer", "company": "Newco", "location": "Remote",
+         "url": "https://jobs.lever.co/newco-test/1234-abcd"},
+    ]})
+    n = ingest_job_alert(session, LLMGateway({"fake": fake}, default_route="fake:x"), "Jobs for you", "...",
+                         "jobalerts-noreply@linkedin.com")
+    assert n == 1
+    job = session.scalar(select(Job).where(Job.source == "email_alert", Job.company_name == "Acme Pay"))
+    assert job.apply_url == "https://www.linkedin.com/jobs/view/4012345678" and job.ats == "linkedin"
+    assert job.countries == ["IN"]
+    assert session.scalar(select(Company).where(Company.ats == "lever", Company.board_token == "newco-test"))
+    # idempotent
+    assert ingest_job_alert(session, LLMGateway({"fake": fake}, default_route="fake:x"), "Jobs", "...", "x") == 0

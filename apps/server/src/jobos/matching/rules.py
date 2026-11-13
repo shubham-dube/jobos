@@ -158,10 +158,11 @@ def legitimacy(*, source: str, ats: str, posted_at: datetime | None, description
 _PRIORITY_STATUS = {"home_country": 3, "remote_ok": 3, "sponsorship_offered": 2, "sponsorship_unknown": 1}
 
 
-def prescore(title: str, target_roles: list[str], eligibility_status: str, legit: int) -> float:
+def prescore(title: str, target_roles: list[str], eligibility_status: str, legit: int, early_career: bool = False) -> float:
     """Cheap ordering so the LLM budget is spent on the most promising jobs first."""
     from rapidfuzz import fuzz
 
     t = title.lower()
     role = max((fuzz.token_set_ratio(t, r.lower()) for r in target_roles), default=50) / 100
-    return role * 3 + _PRIORITY_STATUS.get(eligibility_status, 0) + legit / 100
+    level_bonus = {"intern": 2, "junior": 2, "mid": 0.5}.get(title_seniority(title), 0) if early_career else 0
+    return role * 3 + _PRIORITY_STATUS.get(eligibility_status, 0) + legit / 100 + level_bonus

@@ -74,3 +74,41 @@ def test_whatsapp_reply_mapping(session) -> None:
                              payload={"questions": [{"key": "k", "label": "Relocate?", "options": ["Yes", "No"]}]})
     done = answer_from_reply(session, f"iv:{iv.id}:1")
     assert done is not None and done.answer["answers"] == {"k": "No"} and done.status == "answered"
+
+
+@respx.mock
+def test_workday_smartrecruiters_workable_sources_and_hydration() -> None:
+    from jobos.sources.ats import SmartRecruitersSource, WorkableSource, WorkdaySource
+
+    tok = "acme.wd5.myworkdayjobs.com|acme|External"
+    respx.post("https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobs").mock(return_value=httpx.Response(200, json={
+        "total": 1, "jobPostings": [{"title": "Software Engineer", "externalPath": "/job/India-Bengaluru/Software-Engineer_JR1",
+                                     "locationsText": "India, Bengaluru", "postedOn": "Posted 3 Days Ago", "bulletFields": ["JR1"]}]}))
+    respx.get("https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/India-Bengaluru/Software-Engineer_JR1").mock(
+        return_value=httpx.Response(200, json={"jobPostingInfo": {"jobDescription": "<p>Build APIs</p>", "startDate": "2026-11-10",
+                                                                  "country": {"descriptor": "India"}}}))
+    wd = WorkdaySource().fetch(tok, "Acme")
+    assert wd[0].countries == ["IN"] and wd[0].raw["needs_hydrate"]
+    assert wd[0].apply_url == "https://acme.wd5.myworkdayjobs.com/External/job/India-Bengaluru/Software-Engineer_JR1/apply"
+    assert WorkdaySource().hydrate(tok, wd[0].raw)["description_text"] == "Build APIs"
+
+    respx.get("https://api.smartrecruiters.com/v1/companies/Acme/postings?limit=100&offset=0").mock(return_value=httpx.Response(200, json={
+        "totalFound": 1, "content": [{"id": "9", "name": "Backend Engineer", "location": {"city": "Zurich", "country": "ch"},
+                                      "releasedDate": "2026-11-10T00:00:00Z"}]}))
+    sr = SmartRecruitersSource().fetch("Acme", "Acme")
+    assert sr[0].countries == ["CH"] and sr[0].apply_url == "https://jobs.smartrecruiters.com/Acme/9"
+
+    respx.get("https://apply.workable.com/api/v1/widget/accounts/acme?details=true").mock(return_value=httpx.Response(200, json={
+        "name": "Acme", "jobs": [{"title": "ML Engineer", "shortcode": "AB12", "url": "https://apply.workable.com/j/AB12",
+                                  "application_url": "https://apply.workable.com/j/AB12/apply", "telecommuting": True,
+                                  "locations": [{"city": "Paris", "country": "France", "countryCode": "FR"}],
+                                  "description": "<p>Models</p>", "published_on": "2026-11-01"}]}))
+    wk = WorkableSource().fetch("acme", "Acme")
+    assert wk[0].remote_type == "remote" and wk[0].description_text == "Models" and not wk[0].raw["needs_hydrate"]
+
+
+def test_detect_more_ats_urls() -> None:
+    assert detect_ats_from_url("https://salesforce.wd12.myworkdayjobs.com/en-US/External_Career_Site/job/x_JR1") == (
+        "workday", "salesforce.wd12.myworkdayjobs.com|salesforce|External_Career_Site")
+    assert detect_ats_from_url("https://jobs.smartrecruiters.com/ServiceNow/7440001") == ("smartrecruiters", "ServiceNow")
+    assert detect_ats_from_url("https://apply.workable.com/huggingface/j/AB12/") == ("workable", "huggingface")
