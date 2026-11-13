@@ -1,6 +1,6 @@
 # ADR-0005: Deterministic adapters + structured fill plans; single submit gate
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-12
 - Related: form-filling-engine.md, FR-APP-*, NFR-1
 

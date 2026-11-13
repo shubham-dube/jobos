@@ -1,6 +1,8 @@
 # Decisions needed from the founder
 
-Status: In review. **Answer these before Phase 1 starts.** For each one: pick an option (or write your own) and add notes. My recommendation is marked ⭐. When a decision is made I'll update the related ADR to `Accepted` and move the item to the "Decided" log at the bottom.
+Status: Decided (2026-11-13) — see log at bottom. Original questions kept for history.
+
+**Answer these before Phase 1 starts.** For each one: pick an option (or write your own) and add notes. My recommendation is marked ⭐. When a decision is made I'll update the related ADR to `Accepted` and move the item to the "Decided" log at the bottom.
 
 ---
 
@@ -79,4 +81,16 @@ Features, constraints, deadlines (e.g. "I need interviews by <date>"), team memb
 ## Decided log
 | Date | Q | Decision | ADR updated |
 |---|---|---|---|
-| — | — | — | — |
+| 2026-11-13 | Q1 | Roadmap OK. Orchestrated multi-agent system; agents may use the browser for anything without an API (incl. reading webmail). Agents learn **site recipes** automatically for recurring sites (not one-off sites). Target **high volume** (thousands of applications), human-like. | ADR-0014, agents-and-workflows.md |
+| 2026-11-13 | Q2 | Founder in India; open to India + abroad (CH, UK, US, AU, NZ, anywhere) + remote; prefer top-quality employers; sponsorship/eligibility for an Indian citizen must be evaluated per job. | matching rules |
+| 2026-11-13 | Q3 | Local-first runner on **Windows**; cloud later. | ADR-0004 Accepted |
+| 2026-11-13 | Q4 | Everything automatic; behave like a human. Platform-native apply allowed (opt-in per platform, caps). | ADR-0006 Accepted (amended) |
+| 2026-11-13 | Q5 | Everything in review at first; founder-configurable **auto-approval rules** decide what auto-submits. | ADR-0015 |
+| 2026-11-13 | Q6 | Gmail + Zoho Mail, for founder use. IMAP (app passwords) first, browser fallback, Gmail API later. Public launch of any piece only if compliant. | ADR-0007 Accepted (amended) |
+| 2026-11-13 | Q7 | A (local first; AWS later). | — |
+| 2026-11-13 | Q8 | Delegated to Claude: staged auth — single-owner token auth now, Clerk at Phase 3. | ADR-0013 |
+| 2026-11-13 | Q9 | Multi-provider LLM layer; **OpenRouter** first, Gemini later; per-task model routing; tests on cheap models ($5 budget). | ADR-0011 |
+| 2026-11-13 | Q10 | **WhatsApp** + **email via Resend** (domain configured). | ADR-0012 |
+| 2026-11-13 | Q11 | Open repository for now. ⇒ never commit personal data. | — |
+| 2026-11-13 | Q12 | Personal data local only; commit fake profiles only. | — |
+| 2026-11-13 | — | Durable workflows: **DBOS (Postgres-only)** replaces Temporal. | ADR-0010 supersedes ADR-0003 |

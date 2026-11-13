@@ -1,6 +1,6 @@
 # ADR-0006: Apply via employer ATS by default; platform-native apply is opt-in
 
-- Status: Proposed — needs founder decision (DECISIONS-NEEDED Q4)
+- Status: Accepted with amendment (2026-11-13): founder wants full automation incl. platform-native apply; keep ATS-first routing, platform-native apply enabled per platform in settings with caps and human-like pacing
 - Date: 2026-11-12
 - Related: risk-legal-compliance.md R1, FR-APP-4, FR-DISC-3
 

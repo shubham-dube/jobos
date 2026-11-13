@@ -1,6 +1,6 @@
 # ADR-0002: Monorepo with Python backend/agents and TypeScript web
 
-- Status: Proposed
+- Status: Accepted (layout amended: see repo-structure-and-ci.md)
 - Date: 2026-11-12
 - Related: tech-stack.md
 
