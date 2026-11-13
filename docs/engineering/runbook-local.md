@@ -48,6 +48,11 @@ uv run jobos-runner setup --api http://localhost:8000 --token jr_xxx --max-sessi
 uv run jobos-runner login      # opens the dedicated JobOS Chrome profile: sign in to Google, LinkedIn, Naukri…
 uv run jobos-runner run        # leave running; it applies in that Chrome window at a human pace
 ```
+In the `login` window, sign in to **Google first**: Workday and many career sites offer "Sign in with Google",
+which the agents use automatically (Settings → `accounts.google_account` picks the account if you have several).
+Where a site needs its own account, the agents ask once ("Create account / Always allow / No"); generated
+passwords are stored encrypted in your local vault.
+
 The runner uses your installed Google Chrome with its own profile folder (`%LOCALAPPDATA%\JobOS\chrome-profile`), so
 logins persist across restarts and never leave your PC.
 
@@ -63,7 +68,12 @@ Settings → Mailboxes. Use **app passwords** (Gmail: Google Account → Securit
 Zoho: My Account → Security → App Passwords; India accounts use `imap.zoho.in`). Synced every 5 minutes; emails are
 classified and linked to applications (received / rejected / interview / assessment / offer / OTP).
 
-## 8. Daily use
+## 8. Job alerts as a source
+Subscribe to broad job alerts on LinkedIn, Naukri, Indeed and Wellfound with the email you connect in §7. The Inbox
+Clerk turns every alert into jobs, links them to the employer's own application page when possible, and adds new
+employers to the crawl list automatically.
+
+## 9. Daily use
 - Settings → Searches: create a search (filters JSON). Keep **auto-queue** off at first; use Jobs → Apply.
 - Everything goes to **review** until you add approval rules (Settings → `approval_rules`, ADR-0015).
 - Inbox shows questions/reviews/logins; WhatsApp/email point to the same items.

@@ -1,6 +1,8 @@
 # Job sources — where jobs come from and how we get them
 
-Status: Draft. Endpoints below were confirmed via secondary sources; confirm against vendor docs when implementing each connector.
+Status: Updated 2026-11-13 — implemented: Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Workday (cxs), job-alert emails. Scraping libraries rejected (ADR-0017).
+
+Original status: Draft. Endpoints below were confirmed via secondary sources; confirm against vendor docs when implementing each connector.
 
 ## 1. Source tiers
 
