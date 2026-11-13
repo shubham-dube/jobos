@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import io
 
-from jobos_common.profile import MasterProfile
-
 from jobos.llm import LLMGateway, untrusted
+from jobos_common.profile import MasterProfile
 
 
 def extract_text(filename: str, data: bytes) -> str:
     name = filename.lower()
     if name.endswith(".pdf"):
         from pypdf import PdfReader
+        from pypdf.errors import PdfReadError
 
-        reader = PdfReader(io.BytesIO(data))
-        return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+        except (PdfReadError, ValueError, KeyError):
+            return ""  # unreadable/scanned PDF: still storable and uploadable
     return data.decode("utf-8", errors="replace").strip()
 
 

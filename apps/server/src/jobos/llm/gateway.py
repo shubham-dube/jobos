@@ -45,7 +45,8 @@ class LLMGateway:
         daily_budget_usd: float | None = None,
     ):
         self.providers = providers
-        self.routes = {**DEFAULT_ROUTES, **(routes or {})}
+        self.user_routes = dict(routes or {})
+        self.routes = dict(DEFAULT_ROUTES)
         self.default_route = default_route
         self.ledger = ledger
         self.spend_today = spend_today
@@ -53,10 +54,10 @@ class LLMGateway:
 
     # ------------------------------------------------------------------ routing
     def route(self, task: str) -> tuple[LLMProvider, str]:
-        spec = self.routes.get(task)
-        if spec is None:  # allow prefix routes ("form" -> all form.* tasks)
-            prefix = task.split(".")[0]
-            spec = self.routes.get(prefix, self.default_route)
+        # precedence: user exact > user prefix ("form" -> all form.*) > default exact > default prefix > default
+        prefix = task.split(".")[0]
+        spec = (self.user_routes.get(task) or self.user_routes.get(prefix) or self.routes.get(task)
+                or self.routes.get(prefix) or self.default_route)
         provider_name, _, model = spec.partition(":")
         if provider_name not in self.providers:
             # fall back to the first provider (e.g. only "fake" in tests)

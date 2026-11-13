@@ -203,25 +203,32 @@
   // ---------- buttons
   const buttonEls = Array.from(document.querySelectorAll("button, input[type=submit], [role=button], a"));
   const meaningful = fields.filter((f) => f.type !== "checkbox" || f.required).length;
-  const buttons = [];
-  const used2 = new Set();
-  for (const b of buttonEls) {
-    if (!isVisible(b) || b.disabled || b.getAttribute("aria-disabled") === "true") continue;
+  // Rank candidates per kind; the best one wins (e.g. "Submit application" beats a top-of-page "Apply").
+  const best = {};
+  buttonEls.forEach((b, domIndex) => {
+    if (!isVisible(b) || b.disabled || b.getAttribute("aria-disabled") === "true") return;
     const text = clean(b.innerText || b.value || b.getAttribute("aria-label") || "");
-    if (!text || text.length > 60) continue;
-    let kind = null;
+    if (!text || text.length > 60) return;
+    let kind = null, score = 0;
+    const inForm = !!b.closest("form");
+    const isSubmitType = (b.getAttribute("type") || "").toLowerCase() === "submit";
     if (meaningful >= 2) {
-      if (/^(submit( application)?|send( application)?|apply( now)?|complete( application)?|finish|submit & apply)$/i.test(text)) kind = "submit";
-      else if (/^(next|continue|save (and|&) continue|proceed|next step|review)\b/i.test(text)) kind = "next";
+      if (/^(submit( (my |your )?application)?|send( application)?|complete( application)?|finish|submit & apply)$/i.test(text)) { kind = "submit"; score = 10; }
+      else if (/^apply( now)?$/i.test(text)) { kind = "submit"; score = 4; }
+      else if (/^(next|continue|save (and|&) continue|proceed|next step|review( application)?)\b/i.test(text)) { kind = "next"; score = 8; }
     } else if (/^(apply( (now|for this (job|role|position)|here|online))?|i'?m interested|start application)$/i.test(text)) {
-      kind = "apply";
+      kind = "apply"; score = 8;
     }
-    if (!kind) continue;
-    if (used2.has(kind)) continue;
-    used2.add(kind);
+    if (!kind) return;
+    score += (inForm ? 3 : 0) + (isSubmitType ? 2 : 0) + domIndex / 100000;  // later in DOM ≈ bottom of form
+    if (!best[kind] || best[kind].score < score) best[kind] = { el: b, text, score };
+  });
+  const buttons = [];
+  for (const [kind, v] of Object.entries(best)) {
     const bkey = framePrefix + "btn:" + kind;
-    b.setAttribute("data-jobos-button", bkey);
-    buttons.push({ kind, label: text, locator: { button: bkey } });
+    document.querySelectorAll(`[data-jobos-button="${bkey}"]`).forEach((n) => n.removeAttribute("data-jobos-button"));
+    v.el.setAttribute("data-jobos-button", bkey);
+    buttons.push({ kind, label: v.text, locator: { button: bkey } });
   }
 
   // ---------- page classification

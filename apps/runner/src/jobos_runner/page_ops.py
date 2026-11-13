@@ -15,6 +15,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from playwright.async_api import Frame, Locator, Page
+
 from jobos_common.forms import (
     ButtonKind,
     FieldResult,
@@ -29,7 +31,6 @@ from jobos_common.forms import (
     SubmitResult,
 )
 from jobos_common.runner import Artifact, InteractiveElement, NavAction, Observation
-from playwright.async_api import Frame, Locator, Page
 
 from .human import Human
 

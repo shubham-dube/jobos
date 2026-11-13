@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from jobos_common.profile import MasterProfile
 from pydantic import BaseModel, Field
 
 from jobos.llm import LLMGateway, untrusted
+from jobos_common.profile import MasterProfile
 
 
 class MatchVerdict(BaseModel):

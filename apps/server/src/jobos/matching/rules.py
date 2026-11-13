@@ -9,9 +9,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from jobos_common.profile import MasterProfile
-
 from jobos.domain.settings import SearchFilters
+from jobos_common.profile import MasterProfile
 
 SENIORITY_ORDER = ["intern", "junior", "mid", "senior", "staff"]
 

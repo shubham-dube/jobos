@@ -1,0 +1,54 @@
+<!doctype html><html><head><title>Apply - Backend Engineer</title>
+<style>.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.combo-menu{border:1px solid #ccc} .combo-menu div{padding:4px;cursor:pointer}</style></head>
+<body>
+<form id="f" onsubmit="return false">
+  <div class="field"><label for="first_name">First Name*</label><input id="first_name" required></div>
+  <div class="field"><label for="last_name">Last Name*</label><input id="last_name" required></div>
+  <div class="field"><label for="email">Email*</label><input id="email" type="email" required></div>
+  <div class="field"><label for="phone">Phone*</label><input id="phone" type="tel" required></div>
+  <div class="field"><label for="country">Country*</label>
+    <select id="country" required><option value="">Select...</option><option>United States</option><option>India</option><option>Germany</option></select></div>
+  <div class="field"><label id="loc-label">Location (City)*</label>
+    <input id="location" role="combobox" aria-labelledby="loc-label" aria-controls="loc-menu" aria-required="true" autocomplete="off">
+    <div id="loc-menu" role="listbox"></div></div>
+  <div class="field"><label for="resume">Resume/CV*</label><input id="resume" type="file" class="visually-hidden" required></div>
+  <fieldset class="question"><legend>Will you now or in the future require visa sponsorship to work in the United States?*</legend>
+    <label><input type="radio" name="sponsor" value="yes" required> Yes</label>
+    <label><input type="radio" name="sponsor" value="no"> No</label></fieldset>
+  <div class="field"><label for="years">How many years of professional Python experience do you have?*</label>
+    <select id="years" required><option value="">Select...</option><option>Less than 1 year</option><option>1-3 years</option><option>3-5 years</option><option>5+ years</option></select></div>
+  <div class="field"><label for="why">Why do you want to work at Example Corp?*</label><textarea id="why" required maxlength="1000"></textarea></div>
+  <div class="field"><label for="salary">What is your expected annual salary in USD?*</label><input id="salary" required></div>
+  <button type="button" id="next">Next</button>
+  <div id="err" role="alert" style="color:red"></div>
+</form>
+<script>
+const cities = ["Bengaluru, Karnataka, India", "Bengaluru Rural, India", "Berlin, Germany", "Boston, MA, USA"];
+const loc = document.getElementById("location"), menu = document.getElementById("loc-menu");
+loc.addEventListener("input", () => {
+  menu.innerHTML = "";
+  const q = loc.value.toLowerCase();
+  if (!q) return;
+  setTimeout(() => {
+    cities.filter(c => c.toLowerCase().startsWith(q)).forEach(c => {
+      const d = document.createElement("div"); d.setAttribute("role", "option"); d.textContent = c;
+      d.addEventListener("click", () => { loc.value = c; menu.innerHTML = ""; });
+      menu.appendChild(d);
+    });
+  }, 150);
+});
+document.getElementById("next").addEventListener("click", () => {
+  const f = document.getElementById("f");
+  const missing = Array.from(f.querySelectorAll("[required],[aria-required=true]")).filter(e => {
+    if (e.type === "radio") return !f.querySelector(`input[name=${e.name}]:checked`);
+    if (e.type === "file") return !e.files.length;
+    return !e.value;
+  });
+  if (missing.length) { document.getElementById("err").textContent = "Please fill all required fields: " + missing.map(m => m.id || m.name).join(", "); return; }
+  if (!/^\S+@\S+\.\S+$/.test(document.getElementById("email").value)) { document.getElementById("err").textContent = "Invalid email"; return; }
+  sessionStorage.setItem("page1", JSON.stringify({first: first_name.value, email: email.value, resume: resume.files[0].name, sponsor: f.querySelector("input[name=sponsor]:checked").value, why: why.value.length}));
+  location.href = "apply2.html";
+});
+</script>
+</body></html>

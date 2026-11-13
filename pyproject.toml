@@ -19,7 +19,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
-ignore = ["E501", "RUF001", "RUF002", "RUF003", "B008"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003", "B008", "SIM105", "SIM108", "RUF012"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jobos", "jobos_common", "jobos_runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/common/tests", "apps/server/tests", "apps/runner/tests"]

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from jobos_common.profile import MasterProfile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from jobos.db.models import Candidate, Org, ProfileVersion
 from jobos.domain.settings import CandidateSettings
+from jobos_common.profile import MasterProfile
 
 
 def get_or_create_default_candidate(s: Session, name: str = "Owner") -> Candidate:

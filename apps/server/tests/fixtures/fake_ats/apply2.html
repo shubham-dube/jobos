@@ -1,0 +1,11 @@
+<!doctype html><html><head><title>Apply - Step 2</title></head>
+<body>
+<form id="f2" onsubmit="event.preventDefault(); sessionStorage.setItem('submitted','1'); location.href='thanks.html';">
+  <div class="field"><label for="gender">Gender (voluntary)</label>
+    <select id="gender"><option value="">Select...</option><option>Male</option><option>Female</option><option>Decline to self-identify</option></select></div>
+  <div class="field"><label for="hear">How did you hear about us?*</label>
+    <select id="hear" required><option value="">Select...</option><option>LinkedIn</option><option>Company website</option><option>Referral</option></select></div>
+  <div class="field"><label><input type="checkbox" id="consent" required> I agree to the privacy policy*</label></div>
+  <button type="submit">Submit application</button>
+</form>
+</body></html>

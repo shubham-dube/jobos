@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     # workflows
     worker_role: str = "all"  # api | worker | all
+    apply_concurrency: int = 2  # applications running at once per worker (≈ runner tabs)
     runner_task_timeout_s: int = 300
     intervention_timeout_h: float = 48.0
 

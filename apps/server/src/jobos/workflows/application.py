@@ -1,0 +1,426 @@
+"""ApplicationWorkflow: open → reach form → (resolve → ask → fill → verify)* → gate → review → submit.
+
+See docs/architecture/agents-and-workflows.md §3-5 and form-filling-engine.md.
+"""
+
+from __future__ import annotations
+
+import random
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from dbos import DBOS
+
+from jobos.db import session_scope
+from jobos.db.models import Application, Candidate, Document, FormPageRecord
+from jobos.domain.states import AppState
+from jobos.forms import recipes
+from jobos.forms.answer_bank import mark_used, save_answer
+from jobos.forms.gate import evaluate_gate, gate_token
+from jobos.forms.resolver import ResolveContext, resolve_page
+from jobos.llm import get_gateway
+from jobos.services.applications import attempt_context, submitted_counts, transition
+from jobos.services.candidates import get_candidate_settings, get_profile
+from jobos_common.forms import FillPlan, FillResult, FormPage, PageKind, SubmitResult
+from jobos_common.runner import TaskType
+
+from .navigator import decide_nav_step
+from .primitives import Counter, ask_human, call_runner, fire_runner
+
+MAX_PAGES = 12
+MAX_NAV_STEPS = 8
+
+
+# ------------------------------------------------------------------------------------- steps --
+
+@DBOS.step()
+def start_step(app_id: str) -> dict[str, Any]:
+    with session_scope() as s:
+        app = s.get(Application, uuid.UUID(app_id))
+        assert app is not None
+        if app.state not in (AppState.queued, AppState.in_progress, AppState.needs_input,
+                             AppState.ready_for_review):
+            return {"skip": True, "state": app.state}
+        app.attempt += 1
+        app.workflow_id = DBOS.workflow_id or ""
+        app.error = ""
+        transition(s, app, AppState.in_progress, data={"attempt": app.attempt})
+        ctx = attempt_context(s, app.id)
+        recipes.note_job_seen(s, ctx["site_key"], ctx["ats"])
+        ctx["recipe_nav"] = recipes.recipe_nav(s, ctx["site_key"])
+        return ctx
+
+
+@DBOS.step()
+def seconds_until_active_step(candidate_id: str) -> float:
+    """Human pacing: wait for active hours, plus a small random gap between applications."""
+    with session_scope() as s:
+        cand = s.get(Candidate, uuid.UUID(candidate_id))
+        st = get_candidate_settings(s, uuid.UUID(candidate_id))
+        tz = cand.timezone if cand else "Asia/Kolkata"
+    now = datetime.now(UTC)
+    gap = random.uniform(st.pacing.min_gap_seconds, st.pacing.max_gap_seconds)
+    hours = st.pacing.active_hours
+    for minutes in range(0, 7 * 24 * 60, 15):
+        t = now + timedelta(minutes=minutes)
+        if hours.contains(t, tz):
+            return minutes * 60 + gap
+    return gap
+
+
+@DBOS.step()
+def set_state_step(app_id: str, state: str, data: dict[str, Any] | None = None, error: str = "") -> None:
+    with session_scope() as s:
+        app = s.get(Application, uuid.UUID(app_id))
+        assert app is not None
+        if error:
+            app.error = error[:2000]
+        transition(s, app, AppState(state), data=data)
+
+
+@DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=5)
+def resolve_step(ctx: dict[str, Any], page: dict[str, Any], extra_answers: dict[str, Any],
+                 error_hints: dict[str, str]) -> dict[str, Any]:
+    with session_scope() as s:
+        cand_id = uuid.UUID(ctx["candidate_id"])
+        settings = get_candidate_settings(s, cand_id)
+        rc = ResolveContext(
+            profile=get_profile(s, cand_id), candidate_id=cand_id, job_title=ctx["title"], company=ctx["company"],
+            job_countries=ctx["countries"], job_id=ctx["job_id"], resume_document_id=ctx["resume_document_id"],
+            site_key=ctx["site_key"], recipe_fields=recipes.recipe_fields(s, ctx["site_key"]),
+            extra_answers=extra_answers, min_confidence=settings.thresholds.auto_answer_confidence)
+        out = resolve_page(s, get_gateway(), FormPage.model_validate(page), rc,
+                           ref=ctx["application_id"], error_hints=error_hints)
+        mark_used(s, out.answer_ids_used)
+        return out.plan.model_dump(mode="json")
+
+
+@DBOS.step()
+def save_answers_step(ctx: dict[str, Any], questions: list[dict[str, Any]], answer: dict[str, Any]) -> None:
+    remember = answer.get("remember", {})
+    with session_scope() as s:
+        for q in questions:
+            key = q["key"]
+            if key not in answer.get("answers", {}):
+                continue
+            scope = remember.get(key, "global")
+            if scope == "none":
+                continue
+            scope_ref = {"company": ctx["company"].lower(), "job": ctx["job_id"]}.get(scope, "")
+            save_answer(s, uuid.UUID(ctx["candidate_id"]), q["label"], answer["answers"][key],
+                        field_type=q.get("type", "text"), options=q.get("options") or [], scope=scope,
+                        scope_ref=scope_ref)
+
+
+@DBOS.step()
+def record_page_step(ctx: dict[str, Any], page: dict[str, Any], plan: dict[str, Any] | None,
+                     fill: dict[str, Any] | None, artifacts: list[dict[str, Any]]) -> None:
+    shots = [a["path"] for a in artifacts if a.get("path")]  # stored by the API when the runner reported
+    with session_scope() as s:
+        s.add(FormPageRecord(application_id=uuid.UUID(ctx["application_id"]), attempt=ctx["attempt"],
+                             page_index=page.get("page_index", 0), url=page.get("url", ""), page=page, plan=plan,
+                             fill_result=fill, screenshots=shots))
+
+
+@DBOS.step()
+def gate_step(ctx: dict[str, Any], plans: list[dict[str, Any]], results: list[dict[str, Any]]) -> dict[str, Any]:
+    with session_scope() as s:
+        cand_id = uuid.UUID(ctx["candidate_id"])
+        settings = get_candidate_settings(s, cand_id)
+        total, per_company = submitted_counts(s, cand_id, ctx["company"])
+        d = evaluate_gate(
+            plans=[FillPlan.model_validate(p) for p in plans], results=[FillResult.model_validate(r) for r in results],
+            settings=settings, ats=ctx["ats"], company=ctx["company"], countries=ctx["countries"],
+            remote=ctx["remote"], match_score=ctx["match_score"], legitimacy=ctx["legitimacy"],
+            submitted_today=total, submitted_company_today=per_company,
+            platform_native=ctx["ats"] in ("linkedin", "naukri"))
+        app = s.get(Application, uuid.UUID(ctx["application_id"]))
+        assert app is not None
+        app.gate = d.to_json()
+        return d.to_json()
+
+
+@DBOS.step()
+def finish_step(ctx: dict[str, Any], state: str, pages: list[dict[str, Any]], plans: list[dict[str, Any]],
+                nav_labels: list[str], detail: dict[str, Any]) -> None:
+    with session_scope() as s:
+        app = s.get(Application, uuid.UUID(ctx["application_id"]))
+        assert app is not None
+        if detail.get("error"):
+            app.error = str(detail["error"])[:2000]
+        transition(s, app, AppState(state), data=detail)
+        if state in (AppState.submitted, AppState.uncertain):
+            recipes.learn_from_success(s, ctx["site_key"], [FormPage.model_validate(p) for p in pages],
+                                       [FillPlan.model_validate(p) for p in plans], nav_labels)
+        elif state == AppState.failed:
+            recipes.note_failure(s, ctx["site_key"])
+
+
+@DBOS.step()
+def file_specs_step(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    if not ctx.get("resume_document_id"):
+        return []
+    with session_scope() as s:
+        d = s.get(Document, uuid.UUID(ctx["resume_document_id"]))
+        if d is None:
+            return []
+        return [{"ref": str(d.id), "filename": d.filename, "download_path": f"/runner/v1/files/{d.id}"}]
+
+
+# ---------------------------------------------------------------------------------- workflow --
+
+@DBOS.workflow()
+def application_workflow(app_id: str) -> str:
+    ctx = start_step(app_id)
+    if ctx.get("skip"):
+        return f"skipped: state {ctx.get('state')}"
+    DBOS.sleep(seconds_until_active_step(ctx["candidate_id"]))
+    ctr = Counter()
+    cid = ctx["candidate_id"]
+    session = f"app:{app_id}:{ctx['attempt']}"
+    files = file_specs_step(ctx)
+    nav_labels: list[str] = []
+
+    def runner(label: str, ttype: TaskType, payload: dict[str, Any], timeout_s: int = 180) -> dict[str, Any]:
+        return call_runner(ctr, cid, label, ttype, session, payload, timeout_s=timeout_s)
+
+    def fail(reason: str, state: str = AppState.failed.value) -> str:
+        finish_step(ctx, state, [], [], [], {"error": reason})
+        fire_runner(ctr, cid, "close", TaskType.close_session, session, {})
+        return f"{state}: {reason}"
+
+    # 1. open and reach the form ------------------------------------------------------------------
+    res = runner("open", TaskType.open_page, {"url": ctx["apply_url"]})
+    if not res.get("ok"):
+        return fail(f"could not open page: {res.get('error')}")
+    record_page_step(ctx, res["data"]["page"], None, None, res.get("artifacts", []))
+    page = res["data"]["page"]
+    page, nav_labels, outcome = _reach_form(ctx, ctr, runner, page)
+    if outcome:
+        return fail(outcome, AppState.skipped.value if outcome.startswith("job closed") else AppState.failed.value)
+
+    # 2. page loop ---------------------------------------------------------------------------------
+    pages: list[dict[str, Any]] = []
+    plans: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+    extra: dict[str, Any] = {}
+    for _ in range(MAX_PAGES):
+        plan, fill, page_after = _complete_page(ctx, ctr, runner, page, extra, files)
+        if plan is None:
+            return fail(fill.get("error", "could not complete page") if fill else "expired",
+                        AppState.expired.value if fill is None else AppState.failed.value)
+        record_page_step(ctx, page, plan, fill, fill.get("_artifacts", []))
+        fill.pop("_artifacts", None)
+        pages.append(page)
+        plans.append(plan)
+        results.append(fill)
+        buttons = {b["kind"] for b in page_after.get("buttons", [])}
+        if "submit" in buttons or "next" not in buttons:
+            break
+        res = runner("next", TaskType.click, {"button_kind": "next"})
+        if not res.get("ok"):
+            return fail(f"could not go to next page: {res.get('error')}")
+        page = res["data"]["page"]
+        page["page_index"] = len(pages)
+    else:
+        return fail("too many pages")
+
+    # 3. gate + review -----------------------------------------------------------------------------
+    gate = gate_step(ctx, plans, results)
+    if not gate["ok"]:
+        return fail("submit gate blocked: " + "; ".join(gate["problems"][:5]))
+    if gate["action"] != "auto_submit":
+        set_state_step(app_id, AppState.ready_for_review.value, {"rule": gate["rule"]})
+        decision = ask_human(ctr, cid, app_id, "review_before_submit",
+                             f"Review: {ctx['title']} at {ctx['company']}",
+                             {"job": _job(ctx), "gate": gate, "match_score": ctx["match_score"],
+                              "pages": _review_pages(pages, plans)})
+        if decision is None:
+            return fail("review expired", AppState.expired.value)
+        if decision.get("decision") != "approve":
+            return fail("skipped by you during review", AppState.skipped.value)
+        set_state_step(app_id, AppState.in_progress.value, {"approved_via": "review"})
+
+        # the tab may have been closed while waiting: replay deterministically from stored plans
+        check = runner("check-alive", TaskType.extract, {})
+        if not check.get("ok") or check["data"]["page"].get("kind") != "form":
+            replay = _replay(ctx, runner, pages, plans, files)
+            if replay:
+                return fail(replay)
+
+    # 4. submit ------------------------------------------------------------------------------------
+    set_state_step(app_id, AppState.submitting.value)
+    res = runner("submit", TaskType.submit, {"gate_token": gate_token(app_id, ctx["attempt"])}, timeout_s=120)
+    sub = SubmitResult.model_validate(res["data"]["result"]) if res.get("ok") else None
+    if sub and sub.page:
+        record_page_step(ctx, sub.page.model_dump(mode="json"), None, None, res.get("artifacts", []))
+    if sub is None:
+        state, detail = AppState.uncertain.value, {"error": res.get("error", "submit failed")}
+    elif sub.confirmed:
+        state, detail = AppState.submitted.value, {"confirmation": sub.confirmation_text[:500], "url": sub.final_url}
+    elif sub.submitted:
+        state, detail = AppState.uncertain.value, {"note": "no confirmation page detected", "url": sub.final_url}
+    elif sub.page and sub.page.kind == PageKind.captcha:
+        # Real browser rarely sees this; a human solves it, then we check the result.
+        ans = ask_human(ctr, cid, app_id, "captcha", f"CAPTCHA on {ctx['company']} application",
+                        {"job": _job(ctx), "message": "Solve the CAPTCHA in the JobOS Chrome window (it will submit), then tap Done."})
+        after = runner("after-captcha", TaskType.extract, {}) if ans else {"ok": False}
+        confirmed = after.get("ok") and after["data"]["page"].get("kind") == "confirmation"
+        state = AppState.submitted.value if confirmed else AppState.uncertain.value
+        detail = {"note": "captcha solved by user" if ans else "captcha not solved"}
+    else:
+        errors = sub.page.errors if sub.page else []
+        state, detail = AppState.uncertain.value, {"note": "submit did not complete", "errors": errors[:5]}
+    finish_step(ctx, state, pages, plans, nav_labels, detail)
+    fire_runner(ctr, cid, "close", TaskType.close_session, session, {})
+    return state
+
+
+# ---------------------------------------------------------------------------- sub-procedures --
+
+def _job(ctx: dict[str, Any]) -> dict[str, Any]:
+    return {"title": ctx["title"], "company": ctx["company"], "url": ctx["apply_url"], "id": ctx["job_id"]}
+
+
+def _reach_form(ctx, ctr, runner, page) -> tuple[dict[str, Any], list[str], str]:
+    """Get from whatever page we landed on to the application form."""
+    nav_labels: list[str] = []
+    recipe_nav = list(ctx.get("recipe_nav") or [])
+    for _step in range(MAX_NAV_STEPS):
+        kind = page.get("kind")
+        if kind == "form":
+            return page, nav_labels, ""
+        if kind == "closed":
+            return page, nav_labels, "job closed / no longer accepting applications"
+        if kind in ("login", "captcha"):
+            ans = ask_human(ctr, ctx["candidate_id"], ctx["application_id"],
+                            "login_required" if kind == "login" else "captcha",
+                            f"{'Log in' if kind == 'login' else 'CAPTCHA'} needed for {ctx['company']}",
+                            {"job": _job(ctx), "url": page.get("url"),
+                             "message": "Complete this in the JobOS Chrome window on your computer, then tap Done."})
+            if ans is None:
+                return page, nav_labels, "login/captcha not completed"
+            res = runner("re-extract", TaskType.extract, {})
+            if not res.get("ok"):
+                return page, nav_labels, res.get("error", "extract failed")
+            page = res["data"]["page"]
+            continue
+        if any(b["kind"] == "apply" for b in page.get("buttons", [])):
+            res = runner("apply-click", TaskType.click, {"button_kind": "apply"})
+            if not res.get("ok"):
+                return page, nav_labels, f"apply button failed: {res.get('error')}"
+            page = res["data"]["page"]
+            nav_labels.append("apply")
+            continue
+        # unknown page: Navigator agent (recipe first, then LLM)
+        obs = runner("observe", TaskType.observe, {})
+        if not obs.get("ok"):
+            return page, nav_labels, obs.get("error", "observe failed")
+        action = decide_nav_step(ctx, obs["data"]["observation"], recipe_nav, nav_labels)
+        if action["kind"] in ("fail", "done"):
+            return page, nav_labels, f"could not find the application form ({action.get('reason', '')})"
+        label = action.pop("label", "")
+        res = runner("act", TaskType.act, {"action": action, "allowed_hosts": _allowed_hosts(ctx, page)})
+        if not res.get("ok"):
+            return page, nav_labels, f"navigation failed: {res.get('error')}"
+        page = res["data"]["page"]
+        if label:
+            nav_labels.append(label)
+    return page, nav_labels, "could not reach the application form"
+
+
+def _allowed_hosts(ctx: dict[str, Any], page: dict[str, Any]) -> list[str]:
+    from urllib.parse import urlparse
+
+    hosts = {urlparse(ctx["apply_url"]).hostname or "", urlparse(page.get("url", "")).hostname or ""}
+    hosts |= {"greenhouse.io", "lever.co", "ashbyhq.com", "myworkdayjobs.com", "smartrecruiters.com",
+              "icims.com", "workable.com", "accounts.google.com"}
+    return sorted(h for h in hosts if h)
+
+
+def _complete_page(ctx, ctr, runner, page, extra, files):
+    """Resolve → ask the human for gaps → fill → verify (retry once with site errors)."""
+    error_hints: dict[str, str] = {}
+    fill: dict[str, Any] = {}
+    plan: dict[str, Any] = {}
+    page_after = page
+    for attempt in range(3):
+        plan = resolve_step(ctx, page, extra, error_hints)
+        unresolved = [u for u in plan["unresolved"] if u.get("required", True)]
+        if unresolved:
+            set_state_step(ctx["application_id"], AppState.needs_input.value)
+            questions = [{"key": u["key"], "label": u["label"], "type": u["type"], "options": u.get("options", []),
+                          "reason": u.get("reason", ""), "suggestion": u.get("suggestion")} for u in unresolved]
+            ans = ask_human(ctr, ctx["candidate_id"], ctx["application_id"], "missing_answer",
+                            f"{len(questions)} question(s) for {ctx['company']}",
+                            {"job": _job(ctx), "questions": questions})
+            if ans is None:
+                return None, None, page
+            save_answers_step(ctx, questions, ans)
+            extra.update(ans.get("answers", {}))
+            set_state_step(ctx["application_id"], AppState.in_progress.value)
+            plan = resolve_step(ctx, page, extra, error_hints)
+            if any(u.get("required", True) for u in plan["unresolved"]):
+                continue
+        res = runner(f"fill-p{page.get('page_index', 0)}", TaskType.fill, {"plan": plan, "files": files},
+                     timeout_s=600)
+        if not res.get("ok"):
+            return None, {"error": f"fill failed: {res.get('error')}"}, page
+        fill = res["data"]["result"]
+        fill["_artifacts"] = res.get("artifacts", [])
+        page_after = fill.get("page") or page
+        bad = {r["key"]: r.get("error", "") for r in fill["results"] if not r["ok"]}
+        page_errors = (fill.get("page") or {}).get("errors", [])
+        if not bad and not page_errors:
+            return plan, fill, page_after
+        if attempt == 2:
+            break
+        # re-resolve failing fields with the site's feedback; extra keys force a fresh answer
+        error_hints = {k: (v or "; ".join(page_errors)) for k, v in bad.items()} or {
+            f["key"]: "; ".join(page_errors) for f in (fill.get("page") or {}).get("fields", [])
+            if f.get("required") and not f.get("current_value")}
+        page = page_after
+    return plan, fill, page_after
+
+
+def _replay(ctx, runner, pages, plans, files) -> str:
+    res = runner("replay-open", TaskType.open_page, {"url": ctx["apply_url"]})
+    if not res.get("ok"):
+        return f"replay open failed: {res.get('error')}"
+    if res["data"]["page"].get("kind") == "job_description":
+        res = runner("replay-apply", TaskType.click, {"button_kind": "apply"})
+    for i, plan in enumerate(plans):
+        r = runner(f"replay-fill-{i}", TaskType.fill, {"plan": plan, "files": files}, timeout_s=600)
+        if not r.get("ok") or any(not x["ok"] for x in r["data"]["result"]["results"]):
+            return "replay after review did not reproduce the form; please re-run"
+        if i < len(plans) - 1:
+            r = runner(f"replay-next-{i}", TaskType.click, {"button_kind": "next"})
+            if not r.get("ok"):
+                return "replay could not advance pages"
+    return ""
+
+
+def _review_pages(pages: list[dict[str, Any]], plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for page, plan in zip(pages, plans, strict=False):
+        labels = {f["key"]: f["label"] for f in page.get("fields", [])}
+        out.append({"url": page.get("url"), "fields": [
+            {"label": labels.get(v["key"], v["key"]), "value": v.get("value") if v.get("value") is not None else
+             ("(file)" if v.get("file_ref") else None), "source": v["source"], "confidence": v.get("confidence")}
+            for v in plan["values"]]})
+    return out
+
+
+def enqueue_application(app_id: str, company: str) -> None:
+    """Enqueue on the apply queue, partitioned per company (one at a time per employer)."""
+    from dbos import SetEnqueueOptions, SetWorkflowID
+
+    from .runtime import APPLY_QUEUE
+
+    apply_queue = DBOS.retrieve_queue(APPLY_QUEUE)
+    assert apply_queue is not None
+    with SetWorkflowID(f"apply:{app_id}:{uuid.uuid4().hex[:8]}"), \
+            SetEnqueueOptions(queue_partition_key=company.lower() or "default"):
+        apply_queue.enqueue(application_workflow, app_id)
+
