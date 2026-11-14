@@ -8,10 +8,10 @@ from typing import Any
 
 import structlog
 from dbos import DBOS, SetWorkflowID
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from jobos.db import session_scope
-from jobos.db.models import Company, Job, Match, SearchProfile
+from jobos.db.models import Application, Company, Job, Match, SearchProfile
 from jobos.llm import get_gateway
 from jobos.services.applications import DuplicateApplication, create_application
 from jobos.services.candidates import get_candidate_settings
@@ -61,11 +61,19 @@ def auto_queue_step(search_profile_id: str) -> list[tuple[str, str, str]]:
         if sp is None or not sp.auto_apply:
             return out
         st = get_candidate_settings(s, sp.candidate_id)
+        # daily cap over a rolling 24h window, shared by every profile/run of this candidate
+        created = s.scalar(select(func.count()).select_from(Application).where(
+            Application.candidate_id == sp.candidate_id,
+            Application.created_at >= datetime.now(UTC) - timedelta(hours=24))) or 0
+        room = max(st.pacing.daily_cap - created, 0)
+        if room == 0:
+            log.info("auto_queue.daily_cap_reached", cap=st.pacing.daily_cap)
+            return out
         rows = s.execute(select(Match, Job).join(Job, Job.id == Match.job_id).where(
             Match.candidate_id == sp.candidate_id, Match.status == "shortlisted",
             Match.score >= st.thresholds.min_match_score_to_queue,
             Match.legitimacy >= st.thresholds.min_legitimacy_to_queue, Job.closed_at.is_(None),
-        ).order_by(Match.score.desc()).limit(st.pacing.daily_cap)).all()
+        ).order_by(Match.score.desc()).limit(room)).all()
         for m, job in rows:
             try:
                 app = create_application(s, sp.candidate_id, job.id, cooldown_days=st.pacing.reapply_cooldown_days,
@@ -80,9 +88,11 @@ def auto_queue_step(search_profile_id: str) -> list[tuple[str, str, str]]:
 
 
 @DBOS.workflow()
-def discovery_workflow(search_profile_id: str, max_llm_scores: int = 100) -> dict[str, Any]:
+def discovery_workflow(search_profile_id: str, max_llm_scores: int = 500, crawl: bool = True) -> dict[str, Any]:
+    """Crawl due boards (optional), evaluate/score new jobs, auto-queue. Scoring runs on the cheap ``job`` route
+    (≈ $0.0006/job on Haiku), so the default scores up to 500 jobs per run."""
     summary: dict[str, Any] = {"crawled": 0, "new_jobs": 0, "errors": 0}
-    for cid in companies_due_step():
+    for cid in companies_due_step() if crawl else []:
         r = crawl_step(cid)
         summary["crawled"] += 1
         summary["new_jobs"] += r.get("new", 0)

@@ -238,7 +238,7 @@ def update_search_profile(sp_id: str, body: SearchProfileIn, auth: AuthContext =
 
 
 @router.post("/search-profiles/{sp_id}/run")
-def run_search_profile(sp_id: str, max_llm_scores: int = 50, auth: AuthContext = Depends(owner),
+def run_search_profile(sp_id: str, max_llm_scores: int = 500, crawl: bool = True, auth: AuthContext = Depends(owner),
                        s: Session = Depends(db)) -> dict[str, str]:
     sp = s.get(SearchProfile, _uuid(sp_id))
     if sp is None or sp.candidate_id != auth.candidate_id:
@@ -249,7 +249,7 @@ def run_search_profile(sp_id: str, max_llm_scores: int = 50, auth: AuthContext =
 
     wf_id = f"discovery:{sp_id}:manual:{datetime.now(UTC):%Y%m%d%H%M%S}"
     opts: EnqueueOptions = {"workflow_name": "discovery_workflow", "queue_name": "discovery", "workflow_id": wf_id}
-    client().enqueue(opts, sp_id, max_llm_scores)
+    client().enqueue(opts, sp_id, max_llm_scores, crawl)
     return {"workflow_id": wf_id}
 
 
@@ -457,11 +457,47 @@ def cancel_application(app_id: str, auth: AuthContext = Depends(owner), s: Sessi
 # ----------------------------------------------------------------------------- interventions --
 
 @router.get("/interventions")
-def list_interventions(status: str = "open", auth: AuthContext = Depends(owner), s: Session = Depends(db)) -> list[dict[str, Any]]:
+def list_interventions(status: str = "open", kind: str = "", limit: int = 200, auth: AuthContext = Depends(owner),
+                       s: Session = Depends(db)) -> list[dict[str, Any]]:
     stmt = select(Intervention).where(Intervention.candidate_id == auth.candidate_id)
     if status != "all":
         stmt = stmt.where(Intervention.status == status)
-    return [_iv(i) for i in s.scalars(stmt.order_by(Intervention.created_at.desc()).limit(200))]
+    if kind:
+        stmt = stmt.where(Intervention.kind == kind)
+    return [_iv(i) for i in s.scalars(stmt.order_by(Intervention.created_at.desc()).limit(min(max(limit, 1), 2000)))]
+
+
+class BulkReviewIn(BaseModel):
+    ids: list[str]
+    decision: str  # approve | reject
+
+
+@router.post("/interventions/bulk")
+def bulk_review(body: BulkReviewIn, auth: AuthContext = Depends(owner), s: Session = Depends(db)) -> dict[str, Any]:
+    """Approve or skip many review-before-submit items at once. Each still passes its own submit gate
+    (caps, validation, unanswered fields) when its workflow resumes; only reviews can be bulk-answered."""
+    if body.decision not in ("approve", "reject"):
+        raise HTTPException(422, "decision must be approve or reject")
+    done: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    for raw in dict.fromkeys(body.ids[:500]):
+        try:
+            i = s.get(Intervention, uuid.UUID(raw))
+        except ValueError:
+            skipped.append(raw)
+            continue
+        if i is None or i.candidate_id != auth.candidate_id or i.kind != "review_before_submit":
+            skipped.append(raw)
+            continue
+        iv = iv_svc.answer_intervention(s, i.id, {"decision": body.decision}, via="web-bulk")
+        if iv is None:
+            skipped.append(raw)
+            continue
+        done.append((iv.workflow_id, iv.topic))
+    s.commit()
+    for wf, topic in done:  # signal only after the answers are durable
+        signal_workflow(wf, {"decision": body.decision}, topic)
+    return {"answered": len(done), "skipped": skipped}
 
 
 def _iv(i: Intervention) -> dict[str, Any]:

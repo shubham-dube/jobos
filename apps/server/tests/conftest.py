@@ -142,7 +142,8 @@ def e2e_stack(tmp_path_factory, database):
     api_port = _free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(launch_workers=True), host="127.0.0.1", port=api_port,
                                            log_level="warning"))
-    threading.Thread(target=server.run, daemon=True).start()
+    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread.start()
     base = f"http://127.0.0.1:{api_port}"
     for _ in range(100):
         try:
@@ -165,9 +166,9 @@ def e2e_stack(tmp_path_factory, database):
     yield Stack(site=f"http://127.0.0.1:{port}", api=client, fake=get_gateway().providers["fake"], tmp=tmp)
     agent.stop()
     server.should_exit = True
+    server_thread.join(timeout=30)  # lets the app's lifespan shut DBOS down cleanly
     httpd.shutdown()
-    time.sleep(1)
-    # stop DBOS workers too: a lingering executor would keep dequeuing workflows from the next test session
+    # make sure no DBOS executor survives (it would keep dequeuing the next test session's workflows)
     from jobos.workflows.runtime import shutdown
 
     shutdown()

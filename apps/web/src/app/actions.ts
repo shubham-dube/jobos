@@ -35,7 +35,7 @@ export async function importJobUrl(form: FormData) {
 }
 
 export async function runSearch(form: FormData) {
-  await api(`/api/v1/search-profiles/${str(form, "id")}/run?max_llm_scores=${str(form, "max") || "50"}`, { method: "POST" });
+  await api(`/api/v1/search-profiles/${str(form, "id")}/run?max_llm_scores=${str(form, "max") || "500"}`, { method: "POST" });
   revalidatePath("/");
 }
 
@@ -83,6 +83,15 @@ export async function answerIntervention(form: FormData) {
   await api(`/api/v1/interventions/${id}/answer`, { method: "POST", json: body });
   revalidatePath("/inbox");
   redirect("/inbox");
+}
+
+export async function bulkReview(form: FormData) {
+  const ids = form.getAll("ids").map(String).filter(Boolean);
+  const decision = str(form, "decision");
+  if (ids.length) await api("/api/v1/interventions/bulk", { method: "POST", json: { ids, decision } });
+  revalidatePath("/review");
+  revalidatePath("/inbox");
+  redirect("/review");
 }
 
 export async function tailorJob(form: FormData) {
