@@ -82,6 +82,10 @@ class Document(TimestampMixin, Base):
     sha256: Mapped[str] = mapped_column(String(64))
     text: Mapped[str] = mapped_column(Text, default="")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    # set for documents generated for one job (tailored resume, cover letter); never reused for other jobs
+    job_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True,
+                                                     index=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # variant, diff, grounding (spec 0002)
 
 
 class Answer(TimestampMixin, Base):

@@ -167,3 +167,7 @@ def e2e_stack(tmp_path_factory, database):
     server.should_exit = True
     httpd.shutdown()
     time.sleep(1)
+    # stop DBOS workers too: a lingering executor would keep dequeuing workflows from the next test session
+    from jobos.workflows.runtime import shutdown
+
+    shutdown()

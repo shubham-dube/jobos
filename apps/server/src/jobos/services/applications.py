@@ -66,7 +66,8 @@ def transition(s: Session, app: Application, new_state: AppState | str, *, actor
 
 
 def pick_resume(s: Session, candidate_id: uuid.UUID, label: str = "") -> Document | None:
-    docs = s.scalars(select(Document).where(Document.candidate_id == candidate_id, Document.kind == "resume")
+    docs = s.scalars(select(Document).where(Document.candidate_id == candidate_id, Document.kind == "resume",
+                                            Document.job_id.is_(None))  # job-specific variants never reused
                      .order_by(Document.created_at)).all()
     if label:
         for d in docs:
@@ -97,15 +98,17 @@ def attempt_context(s: Session, app_id: uuid.UUID) -> dict[str, Any]:
         "site_key": site_key_for(job.ats, job.apply_url, board), "board_token": board,
         "match_score": match.score if match else None, "legitimacy": match.legitimacy if match else None,
         "dry_run": bool(app.dry_run), "resume_document_id": str(doc.id) if doc else "", "resume_filename": doc.filename if doc else "",
-        "documents": default_documents(s, app.candidate_id),
+        "documents": default_documents(s, app.candidate_id, job.id),
     }
 
 
-def default_documents(s: Session, candidate_id: uuid.UUID) -> dict[str, str]:
-    """Non-resume documents by kind (default first, else newest), e.g. {"transcript": "<id>"}."""
+def default_documents(s: Session, candidate_id: uuid.UUID, job_id: uuid.UUID | None = None) -> dict[str, str]:
+    """Non-resume documents by kind, e.g. {"transcript": "<id>"}: this job's own documents first (a generated
+    cover letter), then the default, then the newest. Other jobs' documents are never used."""
     out: dict[str, str] = {}
-    rows = s.scalars(select(Document).where(Document.candidate_id == candidate_id, Document.kind != "resume")
-                     .order_by(Document.is_default.desc(), Document.created_at.desc()))
+    scope = Document.job_id.is_(None) if job_id is None else (Document.job_id.is_(None) | (Document.job_id == job_id))
+    rows = s.scalars(select(Document).where(Document.candidate_id == candidate_id, Document.kind != "resume", scope)
+                     .order_by(Document.job_id.is_(None), Document.is_default.desc(), Document.created_at.desc()))
     for d in rows:
         out.setdefault(d.kind, str(d.id))
     return out

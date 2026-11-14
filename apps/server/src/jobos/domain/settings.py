@@ -20,6 +20,8 @@ class RuleConditions(BaseModel):
     max_low_confidence_fields: int | None = None
     answer_sources_subset_of: list[str] = Field(default_factory=list)
     platform_native: bool | None = None
+    max_tailored_rephrases: int | None = None  # reworded resume lines allowed for auto-submit (spec 0002)
+    allow_generated_cover_letter: bool | None = None
 
 
 class ApprovalRule(BaseModel):
@@ -42,6 +44,9 @@ class GateFacts(BaseModel):
     low_confidence_fields: int = 0
     answer_sources: list[str] = Field(default_factory=list)
     platform_native: bool = False
+    tailored_resume: bool = False
+    tailored_rephrased: int = 0
+    generated_cover_letter: bool = False
 
 
 def _matches(cond: RuleConditions, f: GateFacts) -> bool:
@@ -67,6 +72,10 @@ def _matches(cond: RuleConditions, f: GateFacts) -> bool:
     if cond.max_low_confidence_fields is not None and f.low_confidence_fields > cond.max_low_confidence_fields:
         return False
     if cond.answer_sources_subset_of and not set(f.answer_sources) <= set(cond.answer_sources_subset_of):
+        return False
+    if cond.max_tailored_rephrases is not None and f.tailored_rephrased > cond.max_tailored_rephrases:
+        return False
+    if cond.allow_generated_cover_letter is False and f.generated_cover_letter:
         return False
     return not (cond.platform_native is not None and cond.platform_native != f.platform_native)
 
@@ -116,6 +125,17 @@ class AccountSettings(BaseModel):
     account_email: str = ""  # email for new accounts (default: profile email)
 
 
+class TailoringSettings(BaseModel):
+    """Grounded tailoring (spec 0002). Off by default: costs one LLM call (+1 verify) per application."""
+
+    enabled: bool = False
+    min_match_score: int = 0  # tailor only jobs scoring at least this (manual applies always qualify)
+    rephrase: bool = True  # allow faithful rewording (checked); False = select/reorder only
+    verify: bool = True  # second LLM opinion on reworded lines
+    max_pages: int = 1
+    cover_letter: str = "when_required"  # never | when_required | always
+
+
 class CandidateSettings(BaseModel):
     approval_rules: list[ApprovalRule] = Field(default_factory=list)  # empty => review everything
     pacing: Pacing = Field(default_factory=Pacing)
@@ -123,6 +143,7 @@ class CandidateSettings(BaseModel):
     platform_native_enabled: list[str] = Field(default_factory=list)  # e.g. ["linkedin", "naukri"]
     notify_channels: list[str] = Field(default_factory=lambda: ["email", "whatsapp"])
     accounts: AccountSettings = Field(default_factory=AccountSettings)
+    tailoring: TailoringSettings = Field(default_factory=TailoringSettings)
 
 
 class SearchFilters(BaseModel):

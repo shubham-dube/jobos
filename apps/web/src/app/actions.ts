@@ -85,6 +85,15 @@ export async function answerIntervention(form: FormData) {
   redirect("/inbox");
 }
 
+export async function tailorJob(form: FormData) {
+  const jobId = str(form, "job_id");
+  const out = await api<{ resume: { id: string } }>(`/api/v1/jobs/${jobId}/tailor`, {
+    method: "POST", json: { force: form.get("force") === "1", cover_letter: form.get("cover_letter") === "1" },
+  });
+  revalidatePath(`/jobs/${jobId}`);
+  redirect(`/documents/${out.resume.id}`);
+}
+
 export async function importProfile(form: FormData) {
   const fd = new FormData();
   const file = form.get("file");

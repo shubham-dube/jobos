@@ -5,6 +5,25 @@ export type JobRow = {
   legitimacy: number | null; legitimacy_reasons: string[]; filter_reasons: string[]; seniority: string;
   salary: Record<string, unknown> | null; feedback: string; application: { id: string; state: string } | null;
   description?: string;
+  documents?: DocSummary[];
+};
+export type DocSummary = {
+  id: string; kind: string; label: string; filename: string; job_id: string | null; generator: string;
+  reworded: number; rejected: number; pages: number | null;
+};
+export type DiffLine = {
+  section: string; item_id: string; item_name: string; sources: string[]; source_text: string; final_text: string;
+  status: "verbatim" | "reworded" | "kept_original"; reason: string;
+};
+export type DocDetail = DocSummary & {
+  created_at: string;
+  meta: {
+    generator?: string; job_title?: string; company?: string; pages?: number; trimmed?: string[]; used_llm?: boolean;
+    keywords?: string[]; diff?: DiffLine[];
+    grounding?: { reworded: number; verbatim: number; rejected: number; dropped_items: string[]; dropped_skills: number; notes: string[] };
+    variant?: { skills?: string[] };
+    paragraphs?: string[]; dropped?: string[];
+  };
 };
 export type AppRow = {
   id: string; state: string; title: string; company: string; ats: string; apply_url: string; attempt: number;
@@ -19,6 +38,7 @@ export type Intervention = {
     questions?: Question[];
     pages?: { url: string; fields: { label: string; value: unknown; source: string; confidence: number }[] }[];
     gate?: { rule?: string; facts?: Record<string, unknown> };
+    documents?: { resume: { document_id: string; filename: string; tailored: boolean; reworded: number; rejected: number }; cover_letter_id: string };
     match_score?: number;
     message?: string;
     url?: string;

@@ -21,3 +21,4 @@ One decision per file, numbered, never edited after acceptance except to change 
 | [0015](0015-auto-approval-rules.md) | Founder-configurable auto-approval rules | Accepted |
 | [0016](0016-sign-in-walls.md) | Sign-in walls: Google SSO, vault accounts, consented account creation | Accepted |
 | [0017](0017-no-aggregator-scraping.md) | Aggregator jobs via alert emails, not scraping libraries | Accepted |
+| [0018](0018-typst-resume-rendering.md) | Render tailored resumes with our own Typst template (not RenderCV) | Accepted |

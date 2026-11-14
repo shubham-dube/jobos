@@ -47,6 +47,7 @@ from jobos.services.inbox import PRESETS
 from jobos.services.profile_import import build_profile, extract_text
 from jobos.services.secrets import encrypt
 from jobos.services.storage import put_bytes, sha256
+from jobos.services.tailoring import cover_letter_for_job, document_summary, tailor_for_job
 from jobos.sources.ats import detect_ats_from_url
 from jobos_common.profile import MasterProfile
 
@@ -112,10 +113,56 @@ def import_profile(file: UploadFile | None = File(default=None), text: str = For
 # ---------------------------------------------------------------------------------- documents --
 
 @router.get("/documents")
-def list_documents(auth: AuthContext = Depends(owner), s: Session = Depends(db)) -> list[dict[str, Any]]:
-    docs = s.scalars(select(Document).where(Document.candidate_id == auth.candidate_id).order_by(Document.created_at))
+def list_documents(generated: bool = False, auth: AuthContext = Depends(owner),
+                   s: Session = Depends(db)) -> list[dict[str, Any]]:
+    """Your uploaded documents; ``generated=true`` lists per-job tailored resumes / cover letters instead."""
+    q = select(Document).where(Document.candidate_id == auth.candidate_id,
+                               Document.job_id.is_not(None) if generated else Document.job_id.is_(None))
+    docs = s.scalars(q.order_by(Document.created_at.desc() if generated else Document.created_at))
     return [{"id": str(d.id), "kind": d.kind, "label": d.label, "filename": d.filename, "is_default": d.is_default,
-             "created_at": d.created_at} for d in docs]
+             "created_at": d.created_at, **({"summary": document_summary(d)} if generated else {})} for d in docs]
+
+
+def _own_document(s: Session, auth: AuthContext, doc_id: str) -> Document:
+    d = s.get(Document, _uuid(doc_id))
+    if d is None or d.candidate_id != auth.candidate_id:
+        raise HTTPException(404)
+    return d
+
+
+@router.get("/documents/{doc_id}")
+def get_document(doc_id: str, auth: AuthContext = Depends(owner), s: Session = Depends(db)) -> dict[str, Any]:
+    d = _own_document(s, auth, doc_id)
+    return {**document_summary(d), "created_at": d.created_at, "is_default": d.is_default, "meta": d.meta or {}}
+
+
+@router.get("/documents/{doc_id}/file")
+def document_file(doc_id: str, auth: AuthContext = Depends(owner), s: Session = Depends(db)) -> FileResponse:
+    d = _own_document(s, auth, doc_id)
+    path = (get_settings().data_dir / d.storage_path).resolve()
+    return FileResponse(path, media_type=d.content_type, filename=d.filename)
+
+
+class TailorIn(BaseModel):
+    force: bool = False
+    cover_letter: bool = False
+
+
+@router.post("/jobs/{job_id}/tailor")
+def tailor_job(job_id: str, body: TailorIn | None = None, auth: AuthContext = Depends(owner),
+               s: Session = Depends(db)) -> dict[str, Any]:
+    """Generate (or return) the grounded tailored resume (and optionally cover letter) for a job (spec 0002)."""
+    body = body or TailorIn()
+    j = s.get(Job, _uuid(job_id))
+    if j is None:
+        raise HTTPException(404)
+    cfg = get_candidate_settings(s, auth.candidate_id).tailoring
+    resume = tailor_for_job(s, get_gateway(), auth.candidate_id, j.id, settings=cfg, force=body.force)
+    out: dict[str, Any] = {"resume": document_summary(resume)}
+    if body.cover_letter:
+        letter = cover_letter_for_job(s, get_gateway(), auth.candidate_id, j.id, force=body.force)
+        out["cover_letter"] = document_summary(letter) if letter else None
+    return out
 
 
 DOCUMENT_KINDS = {"resume", "transcript", "cover_letter", "other"}
@@ -246,6 +293,9 @@ def job_detail(job_id: str, auth: AuthContext = Depends(owner), s: Session = Dep
     app = s.scalar(select(Application).where(Application.candidate_id == auth.candidate_id, Application.job_id == j.id))
     row = _job_row(m, j, app) if m else {"job_id": str(j.id), "title": j.title, "company": j.company_name}
     row["description"] = j.description_text
+    row["documents"] = [document_summary(d) for d in s.scalars(
+        select(Document).where(Document.candidate_id == auth.candidate_id, Document.job_id == j.id)
+        .order_by(Document.created_at.desc()))]
     return row
 
 

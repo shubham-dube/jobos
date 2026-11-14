@@ -73,6 +73,20 @@ export default async function InterventionPage({ params }: { params: Promise<{ i
 
       {!closed && iv.kind === "review_before_submit" && (
         <div className="space-y-4">
+          {iv.payload.documents && (
+            <div className="card flex flex-wrap items-center gap-3 text-sm">
+              <span className="font-medium">Resume:</span>
+              <a className="link" href={`/api/documents/${iv.payload.documents.resume.document_id}`} target="_blank" rel="noreferrer">{iv.payload.documents.resume.filename || "resume"}</a>
+              {iv.payload.documents.resume.tailored ? (
+                <Link className="link" href={`/documents/${iv.payload.documents.resume.document_id}`}>
+                  <Badge tone="needs_input">tailored · {iv.payload.documents.resume.reworded} reworded</Badge>
+                </Link>
+              ) : <Badge>uploaded</Badge>}
+              {iv.payload.documents.cover_letter_id && (
+                <Link className="link" href={`/documents/${iv.payload.documents.cover_letter_id}`}>Cover letter (generated)</Link>
+              )}
+            </div>
+          )}
           {iv.payload.pages?.map((p, i) => (
             <div key={i} className="card">
               <div className="mb-2 text-xs text-slate-500">Page {i + 1} · {p.url}</div>

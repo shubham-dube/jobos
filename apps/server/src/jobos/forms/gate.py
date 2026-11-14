@@ -27,7 +27,8 @@ class GateDecision:
 def evaluate_gate(*, plans: list[FillPlan], results: list[FillResult], settings: CandidateSettings, ats: str,
                   company: str, countries: list[str], remote: bool, match_score: int | None,
                   legitimacy: int | None, submitted_today: int, submitted_company_today: int,
-                  platform_native: bool = False) -> GateDecision:
+                  platform_native: bool = False, tailored_resume_id: str = "", tailored_rephrased: int = 0,
+                  generated_cover_letter_id: str = "") -> GateDecision:
     problems: list[str] = []
     for p in plans:
         for u in p.unresolved:
@@ -44,6 +45,8 @@ def evaluate_gate(*, plans: list[FillPlan], results: list[FillResult], settings:
     if submitted_company_today >= settings.pacing.per_company_daily_cap:
         problems.append(f"per-company daily cap reached for {company}")
     values = [v for p in plans for v in p.values]
+    attached = {v.file_ref for v in values if v.file_ref}
+    tailored = bool(tailored_resume_id) and tailored_resume_id in attached
     facts = GateFacts(
         ats=ats, company=company, countries=countries, remote=remote, match_score=match_score,
         legitimacy=legitimacy,
@@ -51,6 +54,8 @@ def evaluate_gate(*, plans: list[FillPlan], results: list[FillResult], settings:
         low_confidence_fields=sum(1 for v in values if v.confidence < 0.9),
         answer_sources=sorted({v.source.value for v in values}),
         platform_native=platform_native,
+        tailored_resume=tailored, tailored_rephrased=tailored_rephrased if tailored else 0,
+        generated_cover_letter=bool(generated_cover_letter_id) and generated_cover_letter_id in attached,
     )
     if problems:
         return GateDecision(ok=False, action="blocked", rule="hard_checks", problems=problems, facts=facts)

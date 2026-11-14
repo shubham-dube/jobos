@@ -15,7 +15,7 @@ Status: In review — ADR-0002. Items marked **(decision)** are listed in DECISI
 | Fallback agent | **browser-use** (MIT); Claude computer use for visual-only pages | Best OSS results; Python | Skyvern (AGPL — no) |
 | LLM | **Provider plug-ins (ADR-0011)**: OpenRouter now (any model incl. Claude), Gemini later; per-task routing | Founder wants freedom of providers | Single-vendor SDK |
 | LLM tracing/evals | **Langfuse** | OSS, self-hostable, prompt versioning + datasets | LangSmith, Braintrust |
-| Resume rendering | **RenderCV** (Typst) | ATS-friendly PDFs from structured data | LaTeX, HTML→PDF |
+| Resume rendering | **Own Typst template + `typst` bindings** (ADR-0018) | ATS-friendly PDFs from structured data, offline | RenderCV (runtime package downloads), LaTeX, HTML→PDF |
 | Discovery | httpx; Greenhouse/Lever/Ashby public APIs (built); **python-jobspy** next for LinkedIn/Indeed/Naukri | — | — |
 | Auth | Staged (ADR-0013): owner token + dashboard password now; **Clerk** at Phase 3 | Secure for single owner, no vendor yet | Better Auth / Auth.js, Supabase Auth |
 | Notifications | **WhatsApp Cloud API** (reply buttons) + **Resend** email (ADR-0012) | Founder's choice; one-tap answers on phone | Telegram, web push |

@@ -19,6 +19,7 @@ dependencies = [
   "structlog>=24.4",
   "python-multipart>=0.0.18",
   "cryptography>=50.0.2",
+  "typst>=0.13",
 ]
 
 [project.scripts]

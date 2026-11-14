@@ -2,7 +2,7 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import type { JobRow } from "@/lib/types";
 import { Badge, ErrorBox, Score } from "@/components/ui";
-import { applyToJob } from "../../actions";
+import { applyToJob, tailorJob } from "../../actions";
 
 export default async function JobDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -28,6 +28,22 @@ export default async function JobDetail({ params }: { params: Promise<{ id: stri
             {j.application ? <Link className="link" href={`/applications/${j.application.id}`}>Application: {j.application.state}</Link> :
               <form action={applyToJob}><input type="hidden" name="job_id" value={j.job_id} /><button className="btn w-full justify-center">Apply with JobOS</button></form>}
             <a className="btn-secondary w-full justify-center" href={j.apply_url} target="_blank" rel="noreferrer">Open posting ↗</a>
+          </div>
+          <div className="card space-y-2 text-sm">
+            <h2>Tailored documents</h2>
+            {j.documents?.length ? (
+              <ul className="space-y-1">{j.documents.map((d) => (
+                <li key={d.id} className="flex items-center gap-2">
+                  <Link className="link" href={`/documents/${d.id}`}>{d.generator === "cover_letter" ? "Cover letter" : "Resume"}</Link>
+                  {d.generator === "tailored_resume" && <span className="text-xs text-slate-500">{d.reworded} reworded{d.rejected ? ` · ${d.rejected} kept original` : ""}</span>}
+                </li>))}</ul>
+            ) : <p className="text-slate-500">Build a one-page resume for this job from your profile. Nothing is invented: every line cites your own facts.</p>}
+            <form action={tailorJob} className="flex flex-wrap gap-2">
+              <input type="hidden" name="job_id" value={j.job_id} />
+              {j.documents?.length ? <input type="hidden" name="force" value="1" /> : null}
+              <button className="btn-secondary">{j.documents?.length ? "Regenerate" : "Tailor resume"}</button>
+              <button className="btn-secondary" name="cover_letter" value="1">+ cover letter</button>
+            </form>
           </div>
           <div className="card text-sm"><h2>Why it fits</h2><ul className="list-disc pl-4">{j.reasons?.map((r) => <li key={r}>{r}</li>)}</ul></div>
           <div className="card text-sm"><h2>Gaps</h2><ul className="list-disc pl-4">{j.gaps?.map((r) => <li key={r}>{r}</li>)}</ul></div>

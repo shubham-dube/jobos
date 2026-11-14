@@ -6,6 +6,7 @@ See docs/architecture/agents-and-workflows.md §3-5 and form-filling-engine.md.
 from __future__ import annotations
 
 import random
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -13,7 +14,7 @@ from typing import Any
 from dbos import DBOS
 
 from jobos.db import session_scope
-from jobos.db.models import Application, Candidate, Document, FormPageRecord
+from jobos.db.models import Application, ApplicationEvent, Candidate, Document, FormPageRecord
 from jobos.domain.states import AppState
 from jobos.forms import recipes
 from jobos.forms.answer_bank import mark_used, save_answer
@@ -22,6 +23,7 @@ from jobos.forms.resolver import ResolveContext, resolve_page
 from jobos.llm import get_gateway
 from jobos.services.applications import attempt_context, submitted_counts, transition
 from jobos.services.candidates import get_candidate_settings, get_profile
+from jobos.services.tailoring import cover_letter_for_job, document_summary, tailor_for_job
 from jobos_common.forms import FillPlan, FillResult, FormPage, PageKind, SubmitResult
 from jobos_common.runner import TaskType
 
@@ -52,6 +54,62 @@ def start_step(app_id: str) -> dict[str, Any]:
         recipes.note_job_seen(s, ctx["site_key"], ctx["ats"])
         ctx["recipe_nav"] = recipes.recipe_nav(s, ctx["site_key"])
         return ctx
+
+
+def _note(s: Any, app: Application, event: str, data: dict[str, Any]) -> None:
+    """Timeline entry that doesn't change state (e.g. 'tailor.done')."""
+    s.add(ApplicationEvent(application_id=app.id, from_state=app.state, to_state=app.state, actor="tailor",
+                           data={"event": event, **data}))
+
+
+@DBOS.step()
+def tailor_step(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Spec 0002: build (or reuse) this job's grounded resume. Never fatal: errors fall back to the uploaded
+    resume. Returns {} when tailoring is off or the job doesn't qualify."""
+    with session_scope() as s:
+        cand_id = uuid.UUID(ctx["candidate_id"])
+        cfg = get_candidate_settings(s, cand_id).tailoring
+        score = ctx.get("match_score")
+        if not cfg.enabled or (score is not None and score < cfg.min_match_score):
+            return {}
+        app = s.get(Application, uuid.UUID(ctx["application_id"]))
+        assert app is not None
+        try:
+            with s.begin_nested():
+                doc = tailor_for_job(s, get_gateway(), cand_id, uuid.UUID(ctx["job_id"]), settings=cfg,
+                                     ref=ctx["application_id"])
+        except Exception as exc:
+            _note(s, app, "tailor.failed", {"error": str(exc)[:500]})
+            return {"error": str(exc)[:300]}
+        app.document_id = doc.id
+        info = document_summary(doc)
+        _note(s, app, "tailor.done", info)
+        return {"document_id": info["id"], "filename": doc.filename, "reworded": info["reworded"],
+                "rejected": info["rejected"]}
+
+
+@DBOS.step()
+def cover_letter_step(ctx: dict[str, Any]) -> str:
+    """Generate (or reuse) a grounded cover letter for this job; '' if it could not be grounded well enough."""
+    with session_scope() as s:
+        app = s.get(Application, uuid.UUID(ctx["application_id"]))
+        assert app is not None
+        try:
+            with s.begin_nested():
+                doc = cover_letter_for_job(s, get_gateway(), uuid.UUID(ctx["candidate_id"]),
+                                           uuid.UUID(ctx["job_id"]), ref=ctx["application_id"])
+        except Exception as exc:
+            _note(s, app, "cover_letter.failed", {"error": str(exc)[:500]})
+            return ""
+        _note(s, app, "cover_letter.done" if doc else "cover_letter.rejected",
+              {"document_id": str(doc.id)} if doc else {})
+        return str(doc.id) if doc else ""
+
+
+@DBOS.step()
+def cover_letter_policy_step(candidate_id: str) -> str:
+    with session_scope() as s:
+        return get_candidate_settings(s, uuid.UUID(candidate_id)).tailoring.cover_letter
 
 
 @DBOS.step()
@@ -139,7 +197,10 @@ def gate_step(ctx: dict[str, Any], plans: list[dict[str, Any]], results: list[di
             settings=settings, ats=ctx["ats"], company=ctx["company"], countries=ctx["countries"],
             remote=ctx["remote"], match_score=ctx["match_score"], legitimacy=ctx["legitimacy"],
             submitted_today=total, submitted_company_today=per_company,
-            platform_native=ctx["ats"] in ("linkedin", "naukri"))
+            platform_native=ctx["ats"] in ("linkedin", "naukri"),
+            tailored_resume_id=(ctx.get("tailored") or {}).get("document_id", ""),
+            tailored_rephrased=(ctx.get("tailored") or {}).get("reworded", 0),
+            generated_cover_letter_id=ctx.get("generated_cover_letter_id", ""))
         app = s.get(Application, uuid.UUID(ctx["application_id"]))
         assert app is not None
         app.gate = d.to_json()
@@ -296,6 +357,11 @@ def application_workflow(app_id: str) -> str:
     if ctx.get("skip"):
         return f"skipped: state {ctx.get('state')}"
     DBOS.sleep(seconds_until_active_step(ctx["candidate_id"]))
+    tailored = tailor_step(ctx)
+    if tailored.get("document_id"):
+        ctx["tailored"] = tailored
+        ctx["resume_document_id"] = tailored["document_id"]
+        ctx["resume_filename"] = tailored["filename"]
     ctr = Counter()
     cid = ctx["candidate_id"]
     session = f"app:{app_id}:{ctx['attempt']}"
@@ -369,7 +435,7 @@ def application_workflow(app_id: str) -> str:
         decision = ask_human(ctr, cid, app_id, "review_before_submit",
                              f"Review: {ctx['title']} at {ctx['company']}",
                              {"job": _job(ctx), "gate": gate, "match_score": ctx["match_score"],
-                              "pages": _review_pages(pages, plans)})
+                              "pages": _review_pages(pages, plans), "documents": _review_documents(ctx)})
         if decision is None:
             return fail("review expired", AppState.expired.value)
         if decision.get("decision") != "approve":
@@ -547,8 +613,30 @@ def _allowed_hosts(ctx: dict[str, Any], page: dict[str, Any]) -> list[str]:
     return sorted(h for h in hosts if h)
 
 
+_COVER_LETTER = re.compile(r"cover ?letter|motivation(al)? letter", re.I)
+
+
+def _maybe_cover_letter(ctx: dict[str, Any], page: dict[str, Any]) -> None:
+    """A cover-letter upload on this page and no letter on file → write a grounded one (per settings)."""
+    if ctx.get("cover_letter_checked") or (ctx.get("documents") or {}).get("cover_letter"):
+        return
+    fields = [f for f in page.get("fields", [])
+              if f.get("type") == "file" and _COVER_LETTER.search(f.get("label", ""))]
+    if not fields:
+        return
+    ctx["cover_letter_checked"] = True
+    policy = cover_letter_policy_step(ctx["candidate_id"])
+    if policy == "never" or (policy == "when_required" and not any(f.get("required") for f in fields)):
+        return
+    doc_id = cover_letter_step(ctx)
+    if doc_id:
+        ctx.setdefault("documents", {})["cover_letter"] = doc_id
+        ctx["generated_cover_letter_id"] = doc_id
+
+
 def _complete_page(ctx, ctr, runner, page, extra):
     """Resolve → ask the human for gaps → fill → verify (retry once with site errors)."""
+    _maybe_cover_letter(ctx, page)
     error_hints: dict[str, str] = {}
     fill: dict[str, Any] = {}
     plan: dict[str, Any] = {}
@@ -608,6 +696,15 @@ def _replay(ctx, runner, pages, plans) -> str:
             if not r.get("ok"):
                 return "replay could not advance pages"
     return ""
+
+
+def _review_documents(ctx: dict[str, Any]) -> dict[str, Any]:
+    t = ctx.get("tailored") or {}
+    return {
+        "resume": {"document_id": ctx.get("resume_document_id", ""), "filename": ctx.get("resume_filename", ""),
+                   "tailored": bool(t), "reworded": t.get("reworded", 0), "rejected": t.get("rejected", 0)},
+        "cover_letter_id": ctx.get("generated_cover_letter_id", ""),
+    }
 
 
 def _review_pages(pages: list[dict[str, Any]], plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
