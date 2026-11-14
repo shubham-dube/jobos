@@ -86,6 +86,13 @@ employers to the crawl list automatically.
 - Settings → Searches: create a search (filters JSON). Keep **auto-queue** off at first; use Jobs → Apply.
 - Everything goes to **review** until you add approval rules (Settings → `approval_rules`, ADR-0015).
 - Inbox shows questions/reviews/logins; WhatsApp/email point to the same items.
+- **Tailored resumes** (spec 0002): Settings → `tailoring.enabled: true`. Each application then gets a one-page
+  resume built from your profile for that job (≈ $0.06/job; + ≈ $0.035 when a cover letter is written). Open any
+  job → *Tailor resume* to preview first: the document page shows every line, its source, and what was reworded.
+  `tailoring.cover_letter`: `never` | `when_required` (default) | `always`. Upload a transcript once in Profile →
+  Documents (type *Transcript*) and it is attached wherever a form asks for one.
+- To let tailored applications auto-submit, add `"max_tailored_rephrases": 20` (and `"allow_generated_cover_letter":
+  true` if wanted) to an approval rule's `when`; otherwise they stay in review.
 
 ## Troubleshooting
 | Symptom | Fix |
@@ -94,3 +101,5 @@ employers to the crawl list automatically.
 | Application stuck in `needs_input` | answer it in Inbox; the workflow resumes exactly where it stopped |
 | `uncertain` state | submit clicked but no confirmation page; check the screenshot and your email |
 | LLM budget reached | raise `JOBOS_LLM_DAILY_BUDGET_USD` or route bulk tasks to cheaper models |
+| Tailored resume shows "keyword selection (no LLM)" | the LLM was unavailable/over budget; the resume is your verbatim text, still valid |
+| `failed: form validation blocked submit (not sent)` | a required field the site checks itself (often an upload); answer it and Retry |

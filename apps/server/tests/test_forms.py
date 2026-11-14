@@ -145,3 +145,10 @@ def test_required_upload_uses_stored_document_or_asks(session) -> None:
     v = out.plan.values[0]
     assert (v.key, v.value, v.file_ref, v.source_ref) == ("t", None, "abc", "document:user_upload")
     assert fake.calls == []
+
+
+def test_notices_that_allow_submitting_do_not_block() -> None:
+    from jobos.forms.gate import blocking_errors
+
+    notice = "Our location service is temporarily unavailable. You can submit your application without a location."
+    assert blocking_errors([notice, "This field is required."]) == ["This field is required."]

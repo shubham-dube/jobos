@@ -15,4 +15,6 @@
 - [x] Document kinds (transcript / cover letter) + file-upload interventions; validation-blocked submits → failed
 - [x] Application-deadline filter ("Deadline to Apply …"); submit waits up to 60s for slow confirmations
 - [ ] Founder acceptance (AC11)
-- [ ] Next: JobSpy connector (LinkedIn/Indeed/Naukri discovery), Workday adapter + vault, tailoring (RenderCV)
+- [x] Tailoring → spec 0002 (grounded resumes + cover letters, Typst, ADR-0018)
+- [ ] Next: Workday beyond sign-in (needs the founder's machine/Google session); aggregator jobs via alert emails
+      (ADR-0017 replaced JobSpy)

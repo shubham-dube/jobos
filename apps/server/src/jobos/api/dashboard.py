@@ -293,9 +293,11 @@ def job_detail(job_id: str, auth: AuthContext = Depends(owner), s: Session = Dep
     app = s.scalar(select(Application).where(Application.candidate_id == auth.candidate_id, Application.job_id == j.id))
     row = _job_row(m, j, app) if m else {"job_id": str(j.id), "title": j.title, "company": j.company_name}
     row["description"] = j.description_text
-    row["documents"] = [document_summary(d) for d in s.scalars(
-        select(Document).where(Document.candidate_id == auth.candidate_id, Document.job_id == j.id)
-        .order_by(Document.created_at.desc()))]
+    latest: dict[str, dict[str, Any]] = {}  # newest per generator (older versions stay downloadable by id)
+    for d in s.scalars(select(Document).where(Document.candidate_id == auth.candidate_id, Document.job_id == j.id)
+                       .order_by(Document.created_at.desc())):
+        latest.setdefault((d.meta or {}).get("generator", d.kind), document_summary(d))
+    row["documents"] = list(latest.values())
     return row
 
 

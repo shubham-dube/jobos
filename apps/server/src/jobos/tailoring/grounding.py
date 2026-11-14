@@ -45,6 +45,11 @@ def _stem(word: str) -> str:
     return word[:5]
 
 
+def _singular(word: str) -> str:
+    w = word.strip(".").lower()
+    return w[:-1] if w.endswith("s") and not w.endswith("ss") and len(w) > 3 else w
+
+
 def _entity_like(tok: str, sentence_start: bool) -> bool:
     """Tech terms and names: inner capitals, digits or symbols, or capitalised mid-sentence."""
     if any(ch.isdigit() for ch in tok) or any(ch in ".+#&" for ch in tok.strip(".")):
@@ -74,6 +79,7 @@ def check_line(text: str, source_text: str, allowed_vocab: set[str], *, max_rati
     src_set = set(src_tokens)
     src_stems = {_stem(t) for t in src_tokens}
     vocab = src_set | allowed_vocab | _GENERIC_TERMS
+    singular_vocab = {_singular(v) for v in vocab}
 
     low = text.lower()
     src_low = source_text.lower()
@@ -88,7 +94,8 @@ def check_line(text: str, source_text: str, allowed_vocab: set[str], *, max_rati
         lt = tok.lower()
         sentence_start = i == 0 or prev_end in {".", ":", ";", "!", "?"}
         prev_end = tok[-1] if tok[-1] in ".:;!?" else ""
-        if _entity_like(tok, sentence_start) and lt.strip(".") not in vocab and lt not in vocab:
+        if _entity_like(tok, sentence_start) and lt.strip(".") not in vocab and lt not in vocab \
+                and _singular(lt) not in singular_vocab:
             return Verdict(False, f"term not in source or skills: {tok}")
         if lt in _STOP or len(lt) < 4:
             continue

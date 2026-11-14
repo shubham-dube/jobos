@@ -28,28 +28,28 @@ master profile instead); cover letters typed into free-text "Why us?" questions 
 resolver as `generated` answers).
 
 ## 4. Acceptance criteria (testable)
-- [ ] AC1 `tailor_resume(profile, job)` returns a variant whose every bullet cites ≥1 source id that exists in
+- [x] AC1 `tailor_resume(profile, job)` returns a variant whose every bullet cites ≥1 source id that exists in
       the profile and belongs to the bullet's item (or is a top-level fact); header/education/contact come from
       the profile deterministically, never from the LLM.
-- [ ] AC2 Grounding: a rephrased bullet is rejected if it contains a number, or a technology/proper-noun-like
+- [x] AC2 Grounding: a rephrased bullet is rejected if it contains a number, or a technology/proper-noun-like
       term, that is not in its sources, its item's skills/names, or the profile's skill list; rejected bullets
       fall back to the verbatim source text. Skills listed must be a subset of profile skills.
-- [ ] AC3 The PDF is A4/Letter (by job country), text-extractable, single column, standard headings, no
+- [x] AC3 The PDF is A4/Letter (by job country), text-extractable, single column, standard headings, no
       images/tables/icons, and at most `max_pages` (default 1) pages — trimmed deterministically if longer.
-- [ ] AC4 The variant, diff (per bullet: source text vs final text, rephrased flag, rejected reason), dropped
+- [x] AC4 The variant, diff (per bullet: source text vs final text, rephrased flag, rejected reason), dropped
       items and grounding report are stored with the Document; tailoring the same job twice reuses it unless
       forced.
-- [ ] AC5 With `tailoring.enabled`, the application workflow tailors before opening the form (durable step),
+- [x] AC5 With `tailoring.enabled`, the application workflow tailors before opening the form (durable step),
       uploads the tailored PDF as the resume, and falls back to the best uploaded resume on any failure
       (recorded as an event). Disabled → behaviour unchanged (FR-TAIL-3).
-- [ ] AC6 Gate facts include `tailored_resume` and `tailored_rephrased`; approval rules can require
+- [x] AC6 Gate facts include `tailored_resume` and `tailored_rephrased`; approval rules can require
       `max_tailored_rephrases`; the review screen shows the resume, its diff and download link.
-- [ ] AC7 Cover letters: when a page has a cover-letter upload (required, or optional and
+- [x] AC7 Cover letters: when a page has a cover-letter upload (required, or optional and
       `cover_letter = always`), a grounded letter (every candidate claim cites profile ids; job context allowed
       only for terms present in the posting) is generated, rendered to PDF, stored per job and attached.
       `cover_letter = never` leaves optional fields empty and turns required ones into an intervention.
-- [ ] AC8 Dashboard: "Tailor resume" on a job, a document page with diff + download, settings toggles.
-- [ ] AC9 Tests: grounding unit tests (number/term injection rejected, honest rewording accepted), renderer
+- [x] AC8 Dashboard: "Tailor resume" on a job, a document page with diff + download, settings toggles.
+- [x] AC9 Tests: grounding unit tests (number/term injection rejected, honest rewording accepted), renderer
       test (text extraction, page limit), e2e apply with tailoring on (fake ATS receives the tailored PDF).
 
 ## 5. UX notes
@@ -83,6 +83,18 @@ Events `tailor.done` / `tailor.failed` on the application; ledger cost per tailo
 - Under-strict grounding lets a synonym change meaning ("led" vs "helped") → optional LLM verifier and human
   review by default (auto-submit only via explicit rule).
 - One-page trimming may drop something the user considers essential → item `priority` in the profile.
+
+## 9b. Validation (2026-11-14, live, real profile)
+- Databricks New Grad (London, A4): 1 page; 13 reworded / 2 reverted (one deterministic: a term not in the
+  source; one by the verifier); grounded summary; cover letter 11/11 sentences kept. ≈ $0.09 per job
+  (Sonnet tailor + Haiku verify + Sonnet letter).
+- Figma Intern (US, Letter) via the real application workflow (dry run): tailored PDF generated in the workflow
+  and attached on Greenhouse ("Shubham_Kumar_Dubey_Resume_Figma.pdf" visible on the form); gate facts
+  `tailored_resume=true, tailored_rephrased=14`.
+- Found and fixed while validating: verifier output budget; readable dates for summary grounding; singular/
+  plural tech terms; verifier needs the item name; Greenhouse removes the file input after upload, so values
+  filled in earlier passes are carried into the final plan/evidence; site notices that say "you can submit"
+  no longer block the gate.
 
 ## 10. Open questions
 - [ ] Q1 Should verified "reworded" lines be written back to the master profile as alternates? (later)

@@ -18,7 +18,7 @@ from jobos.db.models import Application, ApplicationEvent, Candidate, Document, 
 from jobos.domain.states import AppState
 from jobos.forms import recipes
 from jobos.forms.answer_bank import mark_used, save_answer
-from jobos.forms.gate import evaluate_gate, gate_token
+from jobos.forms.gate import blocking_errors, evaluate_gate, gate_token
 from jobos.forms.resolver import ResolveContext, resolve_page
 from jobos.llm import get_gateway
 from jobos.services.applications import attempt_context, submitted_counts, transition
@@ -641,6 +641,9 @@ def _complete_page(ctx, ctr, runner, page, extra):
     fill: dict[str, Any] = {}
     plan: dict[str, Any] = {}
     page_after = page
+    # Values already filled in earlier passes. Some fields vanish once filled (Greenhouse swaps a file input for a
+    # filename chip), so a re-resolve of the re-extracted page no longer sees them; keep them in the evidence.
+    filled: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     for attempt in range(3):
         plan = resolve_step(ctx, page, extra, error_hints)
         unresolved = [u for u in plan["unresolved"] if u.get("required", True)]
@@ -666,8 +669,9 @@ def _complete_page(ctx, ctr, runner, page, extra):
         fill = res["data"]["result"]
         fill["_artifacts"] = res.get("artifacts", [])
         page_after = fill.get("page") or page
+        _carry_forward(plan, fill, filled)
         bad = {r["key"]: r.get("error", "") for r in fill["results"] if not r["ok"]}
-        page_errors = (fill.get("page") or {}).get("errors", [])
+        page_errors = blocking_errors((fill.get("page") or {}).get("errors", []))
         if not bad and not page_errors:
             return plan, fill, page_after
         if attempt == 2:
@@ -678,6 +682,23 @@ def _complete_page(ctx, ctr, runner, page, extra):
             if f.get("required") and not f.get("current_value")}
         page = page_after
     return plan, fill, page_after
+
+
+def _carry_forward(plan: dict[str, Any], fill: dict[str, Any],
+                   filled: dict[str, tuple[dict[str, Any], dict[str, Any]]]) -> None:
+    """Merge successfully filled values from earlier passes into this pass's plan/results (and remember this
+    pass's), so the final evidence and gate facts cover every field we filled on this page."""
+    results = {r["key"]: r for r in fill.get("results", [])}
+    in_plan = {v["key"] for v in plan.get("values", [])}
+    for key, (value, result) in filled.items():
+        if key not in in_plan:
+            plan["values"].append(value)
+            if key not in results:
+                fill["results"].append(result)
+    for v in plan.get("values", []):
+        r = results.get(v["key"])
+        if r is not None and r.get("ok"):
+            filled[v["key"]] = (v, r)
 
 
 def _replay(ctx, runner, pages, plans) -> str:

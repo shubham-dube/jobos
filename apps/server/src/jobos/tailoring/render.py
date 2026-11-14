@@ -169,8 +169,11 @@ def render_resume(p: MasterProfile, variant: ResumeVariant, *, paper: str = "a4"
 def render_cover_letter(p: MasterProfile, paragraphs: list[str], *, company: str, greeting: str, closing: str,
                         paper: str = "a4") -> bytes:
     contact, links = _header(p)
+    name = p.basics.full_name
+    # the template signs with the name; models often put it in the closing too
+    closing = closing.replace(name, "").strip().rstrip(",").strip() or "Sincerely"
     return _compile("cover_letter.typ", {
         "page": paper, "fonts": FONTS, "name": p.basics.full_name, "contact": contact + [lk["label"] for lk in links],
         "date": date.today().strftime("%d %B %Y"), "recipient": f"Hiring Team\n{company}".replace("\n", ", "),
-        "greeting": greeting, "paragraphs": paragraphs, "closing": closing,
+        "greeting": greeting, "paragraphs": paragraphs, "closing": f"{closing},",
     })

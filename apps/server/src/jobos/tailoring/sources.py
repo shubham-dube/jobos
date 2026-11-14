@@ -40,8 +40,21 @@ def summary_id(item_id: str) -> str:
     return f"{item_id}:summary"
 
 
+_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+           "November", "December"]
+
+
+def _readable_dates(text: str) -> str:
+    """'2027-05' → also 'May 2027 (May 2027)' so a faithful 'graduating May 2027' is recognised."""
+    extra = []
+    for y, m in re.findall(r"\b(\d{4})-(\d{2})\b", text):
+        if 1 <= int(m) <= 12:
+            extra.append(f"{_MONTHS[int(m) - 1]} {_MONTHS[int(m) - 1][:3]} {y}")
+    return f"{text} ({'; '.join(extra)})" if extra else text
+
+
 def build_catalogue(p: MasterProfile) -> Catalogue:
-    facts = dict(p.fact_index())
+    facts = {k: _readable_dates(v) for k, v in p.fact_index().items()}
     items: dict[str, Item] = {}
     skills = {s.name.lower(): s.name for s in p.skills}
     global_vocab: set[str] = set()

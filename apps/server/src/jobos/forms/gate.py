@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from dataclasses import dataclass, field
 
 from jobos.config import get_settings
@@ -24,6 +25,15 @@ class GateDecision:
                 "facts": self.facts.model_dump() if self.facts else None}
 
 
+# Site notices that explicitly allow submitting anyway (e.g. Greenhouse: "Our location service is temporarily
+# unavailable. You can submit your application without a location."). Everything else on the page blocks.
+_NON_BLOCKING = re.compile(r"\byou (can|may) (still )?submit\b", re.I)
+
+
+def blocking_errors(errors: list[str]) -> list[str]:
+    return [e for e in errors if not _NON_BLOCKING.search(e)]
+
+
 def evaluate_gate(*, plans: list[FillPlan], results: list[FillResult], settings: CandidateSettings, ats: str,
                   company: str, countries: list[str], remote: bool, match_score: int | None,
                   legitimacy: int | None, submitted_today: int, submitted_company_today: int,
@@ -38,8 +48,9 @@ def evaluate_gate(*, plans: list[FillPlan], results: list[FillResult], settings:
         for fr in r.results:
             if not fr.ok:
                 problems.append(f"field {fr.key} not filled correctly: {fr.error}")
-    if results and results[-1].page and results[-1].page.errors:
-        problems.append("page shows validation errors: " + "; ".join(results[-1].page.errors[:3]))
+    page_errors = blocking_errors(results[-1].page.errors) if results and results[-1].page else []
+    if page_errors:
+        problems.append("page shows validation errors: " + "; ".join(page_errors[:3]))
     if submitted_today >= settings.pacing.daily_cap:
         problems.append(f"daily cap reached ({settings.pacing.daily_cap})")
     if submitted_company_today >= settings.pacing.per_company_daily_cap:

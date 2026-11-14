@@ -44,7 +44,8 @@ class VerifyItem(BaseModel):
 
 
 class VerifyOut(BaseModel):
-    results: list[VerifyItem] = Field(default_factory=list)
+    results: list[VerifyItem] = Field(default_factory=list,
+                                      description="ONLY the rewrites that are NOT faithful; [] if all are faithful")
 
 
 SYSTEM = """You are the Tailor agent of a job-application assistant. You build a ONE-PAGE resume for ONE job
@@ -97,7 +98,7 @@ def tailor_resume(gateway: LLMGateway | None, profile: MasterProfile, *, title: 
             f"CANDIDATE FACTS\n{_catalogue_text(profile, cat)}\n\n"
             + ("Rewording is allowed." if rephrase else "Rewording is NOT allowed: copy cited text verbatim."))
     try:
-        draft = gateway.structured("tailor.resume", SYSTEM, user, TailorDraft, ref=ref, max_tokens=3500,
+        draft = gateway.structured("tailor.resume", SYSTEM, user, TailorDraft, ref=ref, max_tokens=6000,
                                    temperature=0.2)
     except Exception as exc:  # LLM down / budget: still produce a sensible, fully verbatim variant
         log.warning("tailor.llm_failed", error=str(exc))
@@ -213,14 +214,17 @@ def _llm_verify(gateway: LLMGateway, result: TailorResult, ref: str) -> None:
     lines = [d for d in result.diff if d.status == "reworded" and d.section != "summary"]
     if not lines:
         return
-    listing = "\n".join(f"{i}. SOURCE: {d.source_text}\n   REWRITE: {d.final_text}" for i, d in enumerate(lines))
+    listing = "\n".join(f"{i}. ITEM: {d.item_name}\n   SOURCE: {d.source_text}\n   REWRITE: {d.final_text}"
+                        for i, d in enumerate(lines))
     try:
         out = gateway.structured(
             "tailor.verify",
             "You check resume rewrites for faithfulness. A rewrite is faithful if every claim in it is stated or "
-            "directly implied by its SOURCE (same scope, same role, same results). Wording and emphasis may change. "
-            "Flag added claims, inflated scope/ownership, new tools, or changed outcomes.",
-            listing, VerifyOut, ref=ref, max_tokens=800)
+            "directly implied by its SOURCE (same scope, same role, same results). Wording and emphasis may change, "
+            "and the ITEM (role/company or project name) the line belongs to may be named. "
+            "Flag added claims, inflated scope/ownership, new tools, or changed outcomes. "
+            "List only the unfaithful rewrites (index + a few words on the issue); return [] if all are faithful.",
+            listing, VerifyOut, ref=ref, max_tokens=300 + 60 * len(lines))
     except Exception as exc:
         result.grounding.notes.append(f"verifier unavailable: {type(exc).__name__}")
         return

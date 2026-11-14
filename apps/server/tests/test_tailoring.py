@@ -42,6 +42,11 @@ def test_grounding_checker(text: str, ok: bool, why: str) -> None:
     assert why in v.reason
 
 
+def test_grounding_accepts_singular_plural_of_source_terms() -> None:
+    assert check_line("Built local-first chat over WebSocket with offline sync.",
+                      "WhatsApp-style local-first chat (WebSockets, Isar, offline/delta sync).", set()).ok
+
+
 def _gateway(fake: FakeProvider) -> LLMGateway:
     return LLMGateway({"fake": fake}, default_route="fake:test")
 
@@ -152,3 +157,34 @@ def test_cover_letter_drops_ungrounded_sentences() -> None:
     res = check_letter(letter, PROFILE, title="Backend Engineer", company="Acme", description=JD)
     assert res.kept == 2 and len(res.dropped) == 3
     assert "50k documents" in res.paragraphs[0] and "5 million" not in res.paragraphs[0]
+
+
+def test_summary_may_use_readable_dates_of_cited_facts() -> None:
+    from jobos.tailoring.tailor import DraftBullet as B
+    from jobos.tailoring.tailor import TailorDraft, assemble
+
+    cat = build_catalogue(PROFILE)
+    draft = TailorDraft(summary=B(text="Computer Science student graduating May 2027 who built a FastAPI service.",
+                                  sources=["e1", "w1h1"]),
+                        experience=[{"id": "w1", "bullets": [{"text": SRC, "sources": ["w1h1"]}]}])
+    r = assemble(PROFILE, cat, draft, rephrase=True)
+    assert r.variant.summary is not None, r.grounding.notes
+    bad = TailorDraft(summary=B(text="Student graduating June 2027.", sources=["e1"]))
+    assert assemble(PROFILE, cat, bad, rephrase=True).variant.summary is None
+
+
+def test_values_filled_in_earlier_passes_stay_in_the_evidence() -> None:
+    """Greenhouse swaps a file input for a filename chip once attached; a retry pass re-extracts the page without
+    it. The final plan/results must still show the (tailored) resume we attached in pass 1."""
+    from jobos.workflows.application import _carry_forward
+
+    filled: dict = {}
+    p1 = {"values": [{"key": "id:resume", "file_ref": "doc-1"}, {"key": "id:city", "value": "Raichur"}]}
+    f1 = {"results": [{"key": "id:resume", "ok": True, "actual": "R.pdf"}, {"key": "id:city", "ok": False}]}
+    _carry_forward(p1, f1, filled)
+    p2 = {"values": [{"key": "id:city", "value": "Raichur, Karnataka"}]}  # resume field gone from the page
+    f2 = {"results": [{"key": "id:city", "ok": True}]}
+    _carry_forward(p2, f2, filled)
+    assert [v["key"] for v in p2["values"]] == ["id:city", "id:resume"]
+    assert {r["key"] for r in f2["results"]} == {"id:city", "id:resume"}
+    assert p2["values"][0]["value"] == "Raichur, Karnataka"  # newer pass wins
