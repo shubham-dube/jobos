@@ -80,7 +80,8 @@ class LLMGateway:
         if self.ledger:
             self.ledger(request, response, "")
         log.info("llm.call", task=request.task, model=response.model, cost=response.cost_usd,
-                 tokens_in=response.input_tokens, tokens_out=response.output_tokens, ms=response.latency_ms)
+                 tokens_in=response.input_tokens, tokens_out=response.output_tokens, ms=response.latency_ms,
+                 cached=response.raw.get("cached_tokens", 0))
         return response
 
     def structured(
@@ -93,14 +94,18 @@ class LLMGateway:
         ref: str = "",
         temperature: float = 0.1,
         max_tokens: int = 4000,
+        context: str = "",
     ) -> T:
+        """``context``: stable text (same across many calls, e.g. the candidate profile) placed before ``user``
+        and marked cacheable, so repeated calls pay a fraction of its input cost."""
         """Ask for JSON matching ``output``; validates and repairs once."""
         schema = output.model_json_schema()
         sys_prompt = (
             f"{system}\n\nRespond with a single JSON object that conforms to this JSON schema. "
             f"No prose, no markdown fences.\nJSON schema:\n{json.dumps(schema)}"
         )
-        messages = [LLMMessage(role="system", content=sys_prompt), LLMMessage(role="user", content=user)]
+        messages = [LLMMessage(role="system", content=sys_prompt),
+                    LLMMessage(role="user", content=user, cached_prefix=context)]
         last_error = ""
         for _attempt in range(2):
             req = LLMRequest(task=task, messages=messages, json_schema=schema, schema_name=output.__name__,

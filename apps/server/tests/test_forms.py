@@ -152,3 +152,63 @@ def test_notices_that_allow_submitting_do_not_block() -> None:
 
     notice = "Our location service is temporarily unavailable. You can submit your application without a location."
     assert blocking_errors([notice, "This field is required."]) == ["This field is required."]
+
+
+def test_openrouter_marks_stable_prefix_cacheable_for_anthropic_only() -> None:
+    from jobos.llm.base import LLMMessage
+    from jobos.llm.openrouter import _message
+
+    profile = "PROFILE " * 1000
+    m = LLMMessage(role="user", content="fields...", cached_prefix=profile)
+    a = _message(m, "anthropic/claude-haiku-5.5")
+    assert a["content"][0]["cache_control"] == {"type": "ephemeral"} and a["content"][1]["text"] == "fields..."
+    o = _message(m, "openai/gpt-5")  # automatic prefix caching: plain text, stable part first
+    assert o["content"] == profile + "fields..."
+    small = _message(LLMMessage(role="user", content="x", cached_prefix="short"), "anthropic/claude-haiku-5.5")
+    assert "cache_control" not in small["content"][0]
+
+
+def test_cheap_model_failures_escalate_to_the_strong_route_once(session) -> None:
+    cand = get_or_create_default_candidate(session)
+    cheap, strong = FakeProvider(), FakeProvider()
+    cheap.on("form.resolve", lambda req: {"fields": [
+        {"key": "q1", "action": "fill", "value": "Maybe", "source": "profile", "confidence": 0.99},  # invalid
+        {"key": "q2", "action": "ask", "confidence": 0.0, "question_for_user": "Tea?"},  # needs the human
+    ]})
+    strong.on("form.resolve.strong", lambda req: {"fields": [
+        {"key": "q1", "action": "fill", "value": "Yes", "source": "profile", "fact_ids": ["w1"], "confidence": 0.95},
+    ]})
+    gw = LLMGateway({"cheap": cheap, "strong": strong}, default_route="strong:big",
+                    routes={"form.resolve": "cheap:small"})
+    page = FormPage(url="https://x", fields=[f("q1", "Will you relocate?", FieldType.radio, ["Yes", "No"]),
+                                              f("q2", "Escalation test: what is your favourite tea?")])
+    rc = ResolveContext(profile=PROFILE, candidate_id=cand.id, job_title="SWE", company="Acme", job_countries=["IN"])
+    out = resolve_page(session, gw, page, rc)
+    assert [(v.key, v.value) for v in out.plan.values] == [("q1", "Yes")]
+    assert [u.key for u in out.plan.unresolved] == ["q2"]  # the strong model couldn't answer it either → you
+    assert len(cheap.calls) == 1 and len(strong.calls) == 1  # one escalation call covering both fields
+    assert "favourite tea" in strong.calls[0].messages[-1].content
+
+
+def test_prior_employment_answered_from_work_history() -> None:
+    ctx = Ctx(profile=PROFILE, company="Acme Labs")
+    yes = map_field(ctx, f("q", "Have you ever worked for Acme Labs before?", FieldType.select, ["Yes", "No"]))
+    assert yes is not None and yes.value == "Yes"
+    ctx = Ctx(profile=PROFILE, company="Figma")
+    no = map_field(ctx, f("q", "Have you ever worked for Figma before, as an employee or a contractor/consultant?",
+                          FieldType.select, ["Yes", "No"]))
+    assert no is not None and no.value == "No"
+    assert map_field(ctx, f("q", "Do you have a relative who has worked at Figma?", FieldType.select,
+                            ["Yes", "No"])) is None
+
+
+def test_question_style_labels_map_deterministically() -> None:
+    from jobos.forms.taxonomy import plain_label
+
+    assert plain_label("What is your First Name?") == "First Name"
+    assert plain_label("What is the best Email to reach you with?") == "Email"
+    ctx = Ctx(profile=PROFILE)
+    v = map_field(ctx, f("q", "What is your Last Name?"))
+    assert v is not None and v.value == PROFILE.basics.last_name
+    v = map_field(ctx, f("q", "What is the best Phone Number to reach you with?", FieldType.text))
+    assert v is not None and v.source == ValueSource.profile

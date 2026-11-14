@@ -112,7 +112,64 @@
   const seenGroups = new Set();
   const all = Array.from(document.querySelectorAll("input, select, textarea, [role=combobox], [contenteditable=true], [role=radiogroup]"));
 
-  for (const el of all) {
+  // ---------- Google Forms: every question is a [role=listitem] with ARIA widgets whose options carry data-value
+  const isGForm = /(^|\.)docs\.google\.com$/.test(location.hostname) && /\/forms\//.test(location.pathname);
+  // Forms restricted to signed-in users render every control disabled behind a "Sign in" prompt.
+  const gformLocked = isGForm && Array.from(document.querySelectorAll("[role=listitem] input:not([type=hidden]), [role=listitem] textarea, [role=listitem] [role=radio], [role=listitem] [role=checkbox], [role=listitem] [role=listbox]"))
+    .some((el) => el.disabled || el.getAttribute("aria-disabled") === "true");
+  if (isGForm) {
+    const optValue = (o) => {
+      const v = o.getAttribute("data-value") ?? o.getAttribute("data-answer-value") ?? o.getAttribute("aria-label") ?? "";
+      return v === "__other_option__" ? "Other" : clean(v);
+    };
+    document.querySelectorAll("[role=listitem]").forEach((li, idx) => {
+      const h = li.querySelector("[role=heading]");
+      if (!h || !isVisible(li)) return;
+      const lines = (h.innerText || "").split("\n").map(clean).filter((t) => t && t !== "*");
+      const label = lines[0] || "";
+      if (!label) return;
+      const required = !!li.querySelector('[aria-label="Required question"]') || /\*\s*$/.test(h.innerText || "");
+      const description = lines.slice(1).join(" ").slice(0, 300);
+      const base = { label, required, placeholder: "", description, max_length: null, accept: "" };
+      const radios = Array.from(li.querySelectorAll("[role=radio]"));
+      const checks = Array.from(li.querySelectorAll("[role=checkbox]"));
+      const listbox = li.querySelector("[role=listbox]");
+      const key = framePrefix + "gf:" + idx;
+      used.add(key);
+      if (radios.length || checks.length) {
+        const opts = radios.length ? radios : checks;
+        li.setAttribute("data-jobos-key", key);
+        const picked = opts.filter((o) => o.getAttribute("aria-checked") === "true").map(optValue);
+        fields.push({ ...base, key, type: radios.length ? "radio" : (opts.length === 1 ? "checkbox" : "multiselect"),
+          options: opts.map(optValue), current_value: picked.length ? picked.join(" | ") : null,
+          locator: { key, widget: "gforms-choice", kind: "gforms-choice" } });
+      } else if (listbox) {
+        li.setAttribute("data-jobos-key", key);
+        const options = Array.from(listbox.querySelectorAll("[role=option]")).map(optValue).filter(Boolean);
+        const sel = listbox.querySelector('[role=option][aria-selected=true]');
+        const cur = sel ? optValue(sel) : "";
+        fields.push({ ...base, key, type: "select", options: [...new Set(options)], current_value: cur || null,
+          locator: { key, widget: "gforms-listbox" } });
+      } else {
+        const input = li.querySelector("textarea, input:not([type=hidden])");
+        if (!input) {
+          if (/add file|upload/i.test(li.innerText || "")) {  // Drive upload: needs the person's Google account UI
+            li.setAttribute("data-jobos-key", key);
+            fields.push({ ...base, key, type: "file", options: [], current_value: null,
+              locator: { key, widget: "gforms-file" } });
+          }
+          return;
+        }
+        input.setAttribute("data-jobos-key", key);
+        const t = (input.getAttribute("type") || "").toLowerCase();
+        const type = input.tagName === "TEXTAREA" ? "textarea"
+          : ({ email: "email", tel: "phone", url: "url", number: "number", date: "date" }[t] || "text");
+        fields.push({ ...base, key, type, options: [], current_value: input.value || null, locator: { key, widget: "" } });
+      }
+    });
+  }
+
+  for (const el of isGForm ? [] : all) {
     const tag = el.tagName;
     const type = (el.getAttribute("type") || "").toLowerCase();
     if (tag === "INPUT" && ["hidden", "submit", "button", "image", "reset", "search"].includes(type)) continue;
@@ -243,7 +300,7 @@
     let kind = null, score = 0;
     const inForm = !!b.closest("form");
     const isSubmitType = (b.getAttribute("type") || "").toLowerCase() === "submit";
-    if (meaningful >= 2) {
+    if (meaningful >= 2 || (isGForm && fields.length)) {
       if (/^(submit( (my |your )?application)?|send( application)?|complete( application)?|finish|submit & apply)$/i.test(text)) { kind = "submit"; score = 10; }
       else if (/^apply( now)?$/i.test(text)) { kind = "submit"; score = 4; }
       else if (/^(next|continue|save (and|&) continue|proceed|next step|review( application)?)\b/i.test(text)) { kind = "next"; score = 8; }
@@ -253,7 +310,8 @@
     // sign-in walls (Workday & co.): recognised on any page
     const auto = (b.getAttribute("data-automation-id") || "").toLowerCase();
     if (!kind) {
-      if (/^(sign in|log in|continue|login) with google$/i.test(text) || auto === "googlesigninbutton") { kind = "sso_google"; score = 10; }
+      if (/^(sign in|log in|continue|login) with google$/i.test(text) || auto === "googlesigninbutton" ||
+          (isGForm && /^sign in$/i.test(text))) { kind = "sso_google"; score = 10; }
       else if (/^(sign in|continue|log in) with (e-?mail|email address)$/i.test(text) || auto === "signinwithemailbutton") { kind = "email_signin"; score = 10; }
       else if (/^(create (an )?account|sign up|register)$/i.test(text) || auto === "createaccountlink" || auto === "createaccountsubmitbutton") { kind = "create_account"; score = auto === "createaccountsubmitbutton" ? 12 : 8; }
       else if (hasPasswordField && (/^(sign in|log in|login)$/i.test(text) || auto === "signinsubmitbutton")) { kind = "signin"; score = 10; }
@@ -276,11 +334,12 @@
   let kind = "other";
   const hasPassword = Array.from(document.querySelectorAll("input[type=password]")).some(isVisible);
   const captchaFrame = Array.from(document.querySelectorAll("iframe")).some((f) => /captcha|challenge|turnstile/i.test(f.src || "") && f.getBoundingClientRect().width > 100 && f.getBoundingClientRect().height > 100);
-  if (/(thank(s| you) for (applying|your (application|interest))|application (has been |was )?(received|submitted)|we('ve| have) received your application|successfully (applied|submitted))/i.test(lower) && meaningful < 2) kind = "confirmation";
+  if (/(thank(s| you) for (applying|your (application|interest))|application (has been |was )?(received|submitted)|we('ve| have) received your application|successfully (applied|submitted)|your response has been recorded)/i.test(lower) && meaningful < 2) kind = "confirmation";
+  else if (isGForm && (gformLocked || (!fields.length && /(sign in to continue|you need permission|only (users|people) in)/i.test(lower)))) kind = "login";
   else if (/(no longer (accepting|available|open)|position (has been )?(filled|closed)|job (posting )?(is )?(not found|closed|expired)|page not found)/i.test(lower) && meaningful < 2) kind = "closed";
   else if (captchaFrame || /verify (that )?you are (a )?human|are you a robot/i.test(lower)) kind = "captcha";
   else if ((hasPassword && meaningful <= 4) || (meaningful < 2 && buttons.some((b) => ["sso_google", "email_signin", "create_account"].includes(b.kind)))) kind = "login";
-  else if (meaningful >= 2) kind = "form";
+  else if (meaningful >= 2 || (isGForm && fields.length)) kind = "form";
   else if (buttons.some((b) => b.kind === "apply")) kind = "job_description";
 
   // ---------- visible errors

@@ -1,0 +1,51 @@
+<!doctype html><html><head><title>Internship Application</title></head><body>
+<!-- Mirrors Google Forms markup (role=listitem questions, ARIA widgets with data-value) incl. widget behaviour. -->
+<form>
+<div role="list">
+  <div role="listitem"><div role="heading">Full Name<span aria-label="Required question"> *</span></div>
+    <input type="text" aria-labelledby="h1"></div>
+  <div role="listitem"><div role="heading">Country<span aria-label="Required question"> *</span></div>
+    <div role="radiogroup">
+      <div role="radio" data-value="India" aria-label="India" aria-checked="false"></div>
+      <div role="radio" data-value="Nepal" aria-label="Nepal" aria-checked="false"></div>
+      <div role="radio" data-value="__other_option__" aria-checked="false"></div>
+    </div></div>
+  <div role="listitem"><div role="heading">Technical Knowledge</div>
+    <div role="list">
+      <div role="listitem"><div role="checkbox" data-answer-value="Python" aria-label="Python" aria-checked="false"></div> Python</div>
+      <div role="listitem"><div role="checkbox" data-answer-value="SQL" aria-label="SQL" aria-checked="false"></div> SQL</div>
+      <div role="listitem"><div role="checkbox" data-answer-value="Excel" aria-label="Excel" aria-checked="false"></div> Excel</div>
+    </div></div>
+  <div role="listitem"><div role="heading">Position applying for<span aria-label="Required question"> *</span></div>
+    <div role="listbox" id="lb" aria-expanded="false">
+      <div role="option" data-value="" aria-selected="true">Choose</div>
+      <div role="option" data-value="Backend Intern" aria-selected="false" style="display:none">Backend Intern</div>
+      <div role="option" data-value="Frontend Intern" aria-selected="false" style="display:none">Frontend Intern</div>
+    </div></div>
+  <div role="listitem"><div role="heading">Why do you want this internship?</div><textarea></textarea></div>
+</div>
+<div role="button" id="next"><span>Next</span></div>
+</form>
+<div id="popup" style="display:none;position:absolute;top:10px;left:10px;background:#fff">
+  <div role="option" data-value="Backend Intern">Backend Intern</div>
+  <div role="option" data-value="Frontend Intern">Frontend Intern</div>
+</div>
+<style>[role=radio],[role=checkbox]{display:inline-block;width:16px;height:16px;border:1px solid #333}
+[aria-checked=true]{background:#333}[role=listbox]{border:1px solid #333;width:200px;height:20px}
+[role=button]{display:inline-block;padding:4px;border:1px solid #333}</style>
+<script>
+document.querySelectorAll('[role=radiogroup]').forEach(g => g.querySelectorAll('[role=radio]').forEach(r =>
+  r.addEventListener('click', () => { g.querySelectorAll('[role=radio]').forEach(x => x.setAttribute('aria-checked', 'false')); r.setAttribute('aria-checked', 'true'); })));
+document.querySelectorAll('[role=checkbox]').forEach(c => c.addEventListener('click', () =>
+  c.setAttribute('aria-checked', c.getAttribute('aria-checked') === 'true' ? 'false' : 'true')));
+const lb = document.getElementById('lb'), popup = document.getElementById('popup');
+lb.addEventListener('click', () => { popup.style.display = 'block'; lb.setAttribute('aria-expanded', 'true'); });
+popup.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', (e) => {
+  e.stopPropagation();
+  lb.querySelectorAll('[role=option]').forEach(x => {
+    const on = x.getAttribute('data-value') === o.getAttribute('data-value');
+    x.setAttribute('aria-selected', on ? 'true' : 'false'); x.style.display = on ? 'block' : 'none'; });
+  popup.style.display = 'none'; lb.setAttribute('aria-expanded', 'false'); }));
+if (location.search.includes('locked')) document.querySelectorAll('input,textarea').forEach(i => i.disabled = true);
+</script>
+</body></html>

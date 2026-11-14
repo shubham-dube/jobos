@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from dbos import DBOS
 
 from jobos.db import session_scope
@@ -20,7 +21,7 @@ from jobos.forms import recipes
 from jobos.forms.answer_bank import mark_used, save_answer
 from jobos.forms.gate import blocking_errors, evaluate_gate, gate_token
 from jobos.forms.resolver import ResolveContext, resolve_page
-from jobos.llm import get_gateway
+from jobos.llm import BudgetExceeded, get_gateway
 from jobos.services.applications import attempt_context, submitted_counts, transition
 from jobos.services.candidates import get_candidate_settings, get_profile
 from jobos.services.tailoring import cover_letter_for_job, document_summary, tailor_for_job
@@ -30,6 +31,7 @@ from jobos_common.runner import TaskType
 from .navigator import decide_nav_step
 from .primitives import Counter, ask_human, call_runner, fire_runner
 
+log = structlog.get_logger(__name__)
 MAX_PAGES = 12
 MAX_NAV_STEPS = 8
 
@@ -153,10 +155,58 @@ def resolve_step(ctx: dict[str, Any], page: dict[str, Any], extra_answers: dict[
             documents=ctx.get("documents") or {},
             site_key=ctx["site_key"], recipe_fields=recipes.recipe_fields(s, ctx["site_key"]),
             extra_answers=extra_answers, min_confidence=settings.thresholds.auto_answer_confidence)
-        out = resolve_page(s, get_gateway(), FormPage.model_validate(page), rc,
-                           ref=ctx["application_id"], error_hints=error_hints)
+        try:
+            out = resolve_page(s, get_gateway(), FormPage.model_validate(page), rc,
+                               ref=ctx["application_id"], error_hints=error_hints)
+        except BudgetExceeded:
+            return {"budget_exceeded": True}  # the workflow waits for budget instead of failing
         mark_used(s, out.answer_ids_used)
         return out.plan.model_dump(mode="json")
+
+
+BUDGET_WAIT_S = 1800
+BUDGET_MAX_WAITS = 48  # one day
+
+
+@DBOS.step()
+def note_step(app_id: str, event: str, data: dict[str, Any]) -> None:
+    with session_scope() as s:
+        app = s.get(Application, uuid.UUID(app_id))
+        if app is not None:
+            _note(s, app, event, data)
+
+
+def _resolve(ctx: dict[str, Any], page: dict[str, Any], extra: dict[str, Any],
+             hints: dict[str, str]) -> dict[str, Any]:
+    """resolve_step that waits (durably) while the daily LLM budget is used up, then continues."""
+    for i in range(BUDGET_MAX_WAITS + 1):
+        plan = resolve_step(ctx, page, extra, hints)
+        if not plan.get("budget_exceeded"):
+            return plan
+        if i == 0:
+            note_step(ctx["application_id"], "llm.budget_wait",
+                      {"message": "daily LLM budget reached; resuming automatically when it frees up"})
+        DBOS.sleep(BUDGET_WAIT_S)
+    raise RuntimeError("LLM budget unavailable for 24 hours")
+
+
+@DBOS.step()
+def crash_step(app_id: str, error: str) -> str:
+    """Last resort for an unexpected workflow error: never leave an application silently 'in progress'.
+    After the submit click we can't know whether it was sent, so that case is 'uncertain', never 'failed'."""
+    with session_scope() as s:
+        app = s.get(Application, uuid.UUID(app_id))
+        if app is None:
+            return ""
+        app.error = f"internal error: {error}"[:2000]
+        if app.state == AppState.submitting:
+            transition(s, app, AppState.uncertain, data={"error": error[:500]})
+        elif app.state in (AppState.needs_input, AppState.ready_for_review):
+            transition(s, app, AppState.in_progress, data={"crash": True})
+            transition(s, app, AppState.failed, data={"error": error[:500]})
+        elif app.state in (AppState.queued, AppState.in_progress):
+            transition(s, app, AppState.failed, data={"error": error[:500]})
+        return app.state
 
 
 @DBOS.step()
@@ -353,6 +403,16 @@ def _files_for(ctx: dict[str, Any], plan: dict[str, Any]) -> list[dict[str, Any]
 
 @DBOS.workflow()
 def application_workflow(app_id: str) -> str:
+    try:
+        return _application(app_id)
+    except Exception as exc:
+        root = (getattr(exc, "errors", None) or [exc])[-1]  # DBOS wraps step failures; show the real cause
+        state = crash_step(app_id, f"{type(root).__name__}: {root}")
+        log.error("application.crashed", app=app_id, error=str(exc)[:300], state=state)
+        return f"{state or 'failed'}: internal error"
+
+
+def _application(app_id: str) -> str:
     ctx = start_step(app_id)
     if ctx.get("skip"):
         return f"skipped: state {ctx.get('state')}"
@@ -529,6 +589,9 @@ def _reach_form(ctx, ctr, runner, page) -> tuple[dict[str, Any], list[str], str]
         if not obs.get("ok"):
             return page, nav_labels, obs.get("error", "observe failed")
         action = decide_nav_step(ctx, obs["data"]["observation"], recipe_nav, nav_labels)
+        if action["kind"] == "budget":  # daily LLM budget used up: wait, then look at the page again
+            DBOS.sleep(BUDGET_WAIT_S)
+            continue
         if action["kind"] in ("fail", "done"):
             return page, nav_labels, f"could not find the application form ({action.get('reason', '')})"
         label = action.pop("label", "")
@@ -645,7 +708,7 @@ def _complete_page(ctx, ctr, runner, page, extra):
     # filename chip), so a re-resolve of the re-extracted page no longer sees them; keep them in the evidence.
     filled: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     for attempt in range(3):
-        plan = resolve_step(ctx, page, extra, error_hints)
+        plan = _resolve(ctx, page, extra, error_hints)
         unresolved = [u for u in plan["unresolved"] if u.get("required", True)]
         if unresolved:
             set_state_step(ctx["application_id"], AppState.needs_input.value)
@@ -659,7 +722,7 @@ def _complete_page(ctx, ctr, runner, page, extra):
             save_answers_step(ctx, questions, ans)
             extra.update(ans.get("answers", {}))
             set_state_step(ctx["application_id"], AppState.in_progress.value)
-            plan = resolve_step(ctx, page, extra, error_hints)
+            plan = _resolve(ctx, page, extra, error_hints)
             if any(u.get("required", True) for u in plan["unresolved"]):
                 continue
         res = runner(f"fill-p{page.get('page_index', 0)}", TaskType.fill, {"plan": plan, "files": _files_for(ctx, plan)},

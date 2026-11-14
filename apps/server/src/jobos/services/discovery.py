@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import resources
+from typing import Any
 
 import structlog
 from sqlalchemy import func, select, update
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from jobos.db.models import Company, Document, Job, Match, SearchProfile
 from jobos.domain.settings import SearchFilters
-from jobos.llm import LLMGateway
+from jobos.llm import BudgetExceeded, LLMGateway
 from jobos.matching.rules import (
     Eligibility,
     application_deadline,
@@ -56,6 +57,39 @@ def add_company(s: Session, ats: str, board_token: str, name: str = "") -> Compa
     return c
 
 
+def add_found_boards(s: Session, found: list[Any]) -> list[str]:
+    """Add boards found by board discovery; returns names of newly added companies."""
+    added: list[str] = []
+    for f in found:
+        if s.scalar(select(Company).where(Company.ats == f.ats, Company.board_token == f.board_token)):
+            continue
+        add_company(s, f.ats, f.board_token, f.name)
+        added.append(f"{f.name} ({f.ats})")
+    return added
+
+
+def import_single_form(s: Session, posting: Any, company_name: str = "") -> Job:
+    """A Google Form (or other single application page) as a job. Idempotent per form."""
+    name = company_name.strip() or posting.title
+    company = add_company(s, posting.ats, posting.form_id, name)
+    company.enabled = False  # nothing to crawl: the form is the posting
+    existing = s.scalar(select(Job).where(Job.source == posting.ats, Job.source_job_id == posting.form_id))
+    if existing:
+        return existing
+    nj = NormalizedJob(source=posting.ats, source_job_id=posting.form_id, company_name=name, title=posting.title,
+                       board_token=posting.form_id,
+                       url=posting.url, apply_url=posting.url, ats=posting.ats,
+                       description_text=posting.description, raw={"single_form": True})
+    job = Job(company_id=company.id, company_name=name, source=nj.source, source_job_id=nj.source_job_id,
+              url=nj.url, apply_url=nj.apply_url, ats=nj.ats, title=nj.title, title_norm=nj.title_norm,
+              locations=[], countries=[], remote_type="unknown", employment_type="", seniority="", salary=None,
+              description_text=nj.description_text, posted_at=datetime.now(UTC), fingerprint=nj.fingerprint,
+              raw=nj.raw)
+    s.add(job)
+    s.flush()
+    return job
+
+
 @dataclass
 class CrawlStats:
     fetched: int = 0
@@ -70,11 +104,12 @@ def upsert_jobs(s: Session, company: Company, jobs: list[NormalizedJob]) -> Craw
     seen_ids: set[str] = set()
     for j in jobs:
         seen_ids.add(j.source_job_id)
+        # Board data is external: clamp to the column sizes so one odd posting can't fail the whole board.
         values = dict(
-            company_id=company.id, company_name=j.company_name, source=j.source, source_job_id=j.source_job_id,
-            url=j.url, apply_url=j.apply_url, ats=j.ats, title=j.title, title_norm=j.title_norm,
-            department=j.department, locations=j.locations, countries=j.countries, remote_type=j.remote_type,
-            employment_type=j.employment_type, seniority="", salary=j.salary, description_text=j.description_text,
+            company_id=company.id, company_name=j.company_name[:200], source=j.source[:30],
+            source_job_id=j.source_job_id[:200], url=j.url, apply_url=j.apply_url, ats=j.ats[:30], title=j.title[:300],
+            title_norm=j.title_norm[:300], department=j.department[:200], locations=j.locations, countries=j.countries,
+            remote_type=j.remote_type[:20], employment_type=j.employment_type[:30], seniority="", salary=j.salary, description_text=j.description_text,
             posted_at=j.posted_at, last_seen_at=now, closed_at=None, fingerprint=j.fingerprint, raw=j.raw,
         )
         stmt = insert(Job).values(id=uuid.uuid4(), first_seen_at=now, **values)
@@ -176,6 +211,15 @@ def evaluate_jobs(s: Session, gateway: LLMGateway | None, search_profile: Search
             stats.filtered += 1
     s.flush()
 
+    # Matches that passed the filters earlier but were never scored (budget or cap reached on that run)
+    pending = s.execute(select(Match, Job).join(Job, Job.id == Match.job_id).where(
+        Match.candidate_id == cand_id, Match.status == "new", Match.score.is_(None), Job.closed_at.is_(None))).all()
+    queued_ids = {m.id for _, _, m in to_score}
+    for m, job in pending:
+        if m.id not in queued_ids:
+            to_score.append((prescore(job.title, targets, (m.eligibility or {}).get("status", ""), m.legitimacy or 0,
+                                      profile.is_student()), job, m))
+
     to_score.sort(key=lambda t: -t[0])
     for _, job, m in to_score:
         if gateway is None or stats.scored >= max_llm_scores:
@@ -185,8 +229,13 @@ def evaluate_jobs(s: Session, gateway: LLMGateway | None, search_profile: Search
             v = score_job(gateway, summary, title=job.title, company=job.company_name, locations=job.locations,
                           eligibility=f"{m.eligibility['status']}: {'; '.join(m.eligibility['reasons'])}",
                           description=job.description_text, ref=f"job:{job.id}")
+        except BudgetExceeded:  # daily budget used up: the rest are scored on a later run
+            stats.skipped_budget += 1
+            gateway = None
+            continue
         except Exception as exc:  # one bad job must not stop the batch
-            stats.errors.append(f"{job.id}: {exc}")
+            if len(stats.errors) < 20:
+                stats.errors.append(f"{job.id}: {exc}")
             log.warning("match.score_failed", job=str(job.id), error=str(exc))
             continue
         m.score, m.reasons, m.gaps = v.score, v.reasons, v.gaps

@@ -16,6 +16,12 @@ class BudgetExceeded(LLMError):
 class LLMMessage(BaseModel):
     role: str  # system | user | assistant
     content: str
+    # Stable text sent before ``content`` that providers may cache across calls (e.g. the candidate profile).
+    # Providers without prompt caching simply send ``cached_prefix + content``.
+    cached_prefix: str = ""
+
+    def full_text(self) -> str:
+        return f"{self.cached_prefix}{self.content}"
 
 
 class LLMRequest(BaseModel):

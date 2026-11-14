@@ -357,14 +357,27 @@ def _enqueue(app_id: str, company: str, workflow_id: str) -> None:
 
 class ImportUrlIn(BaseModel):
     url: str
+    company: str = ""  # for single forms (Google Forms): who is hiring, if the form doesn't say
 
 
 @router.post("/jobs/import-url")
 def import_url(body: ImportUrlIn, auth: AuthContext = Depends(owner), s: Session = Depends(db)) -> dict[str, Any]:
-    """Paste any Greenhouse/Lever/Ashby job URL: adds the company board and crawls it (FR-DISC-5)."""
+    """Paste a job link: ATS job URLs add the employer's board and crawl it (FR-DISC-5); Google Forms links
+    become a single job you can apply to."""
+    from jobos.services.discovery import import_single_form
+    from jobos.sources.single_form import fetch_form, is_single_form
+
+    if is_single_form(body.url):
+        try:
+            posting = fetch_form(body.url)
+        except Exception as exc:
+            raise HTTPException(400, f"could not open the form: {exc}") from exc
+        job = import_single_form(s, posting, body.company)
+        return {"job_id": str(job.id), "company": job.company_name, "ats": job.ats, "title": job.title}
     found = detect_ats_from_url(body.url)
     if not found:
-        raise HTTPException(400, "unsupported URL (Greenhouse, Lever or Ashby job links for now)")
+        raise HTTPException(400, "unsupported URL (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Workday "
+                                 "job links or Google Forms)")
     ats, token = found
     company = add_company(s, ats, token)
     stats = crawl_company(s, company)
@@ -593,6 +606,25 @@ class CompanyIn(BaseModel):
 def create_company(body: CompanyIn, auth: AuthContext = Depends(owner), s: Session = Depends(db)) -> dict[str, str]:
     c = add_company(s, body.ats, body.board_token, body.name)
     return {"id": str(c.id)}
+
+
+class DiscoverBoardsIn(BaseModel):
+    names: list[str] = []  # empty = the built-in candidate list
+
+
+@router.post("/companies/discover")
+def discover_boards(body: DiscoverBoardsIn | None = None, auth: AuthContext = Depends(owner)) -> dict[str, str]:
+    """Find more employers' public job boards (runs in the background; see the workflow result)."""
+    from dbos import EnqueueOptions
+
+    from jobos.workflows.runtime import client
+
+    names = [n.strip() for n in (body.names if body else []) if n.strip()][:2000]
+    wf_id = f"boards:{datetime.now(UTC):%Y%m%d%H%M%S}"
+    opts: EnqueueOptions = {"workflow_name": "board_discovery_workflow", "queue_name": "discovery",
+                            "workflow_id": wf_id}
+    client().enqueue(opts, names or None)
+    return {"workflow_id": wf_id}
 
 
 @router.get("/runners")

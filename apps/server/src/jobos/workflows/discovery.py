@@ -30,14 +30,25 @@ def companies_due_step() -> list[str]:
             (Company.last_crawled_at.is_(None)) | (Company.last_crawled_at < cutoff)))]
 
 
-@DBOS.step(retries_allowed=True, max_attempts=2, interval_seconds=10)
+@DBOS.step()
 def crawl_step(company_id: str) -> dict[str, Any]:
-    with session_scope() as s:
-        c = s.get(Company, uuid.UUID(company_id))
-        if c is None:
-            return {}
-        st = crawl_company(s, c)
-        return {"company": c.name, "fetched": st.fetched, "new": st.new, "closed": st.closed, "error": st.error}
+    """Crawl one board. Never raises: a broken board is recorded on the company and retried on a later run,
+    so one employer can't stop discovery for everyone else."""
+    try:
+        with session_scope() as s:
+            c = s.get(Company, uuid.UUID(company_id))
+            if c is None:
+                return {}
+            st = crawl_company(s, c)
+            return {"company": c.name, "fetched": st.fetched, "new": st.new, "closed": st.closed, "error": st.error}
+    except Exception as exc:
+        log.warning("crawl.failed", company=company_id, error=str(exc)[:300])
+        with session_scope() as s:
+            c = s.get(Company, uuid.UUID(company_id))
+            if c is not None:
+                c.last_error = f"{type(exc).__name__}: {exc}"[:500]
+                c.last_crawled_at = datetime.now(UTC)  # back off until the next recrawl window
+        return {"error": str(exc)[:300]}
 
 
 @DBOS.step()
@@ -105,6 +116,36 @@ def discovery_workflow(search_profile_id: str, max_llm_scores: int = 500, crawl:
         enqueue_application(app_id, company, wf_id)
     summary["queued"] = len(queued)
     return summary
+
+
+@DBOS.step(retries_allowed=True, max_attempts=2, interval_seconds=30)
+def probe_boards_step(names: list[str]) -> list[dict[str, Any]]:
+    from jobos.sources.board_discovery import discover
+
+    return [f.__dict__ for f in discover(names)]
+
+
+@DBOS.step()
+def add_boards_step(found: list[dict[str, Any]]) -> list[str]:
+    from jobos.services.discovery import add_found_boards
+    from jobos.sources.board_discovery import Found
+
+    with session_scope() as s:
+        return add_found_boards(s, [Found(**f) for f in found])
+
+
+@DBOS.workflow()
+def board_discovery_workflow(names: list[str] | None = None, batch: int = 20) -> dict[str, Any]:
+    """Probe employer names for public Greenhouse/Lever/Ashby boards and add them to the crawl list.
+    Durable and resumable: each batch is a step, so a restart continues where it stopped."""
+    from jobos.sources.board_discovery import candidate_names
+
+    todo = names or candidate_names()
+    added: list[str] = []
+    for i in range(0, len(todo), batch):
+        added += add_boards_step(probe_boards_step(todo[i:i + batch]))
+    log.info("board_discovery.done", probed=len(todo), added=len(added))
+    return {"probed": len(todo), "added": len(added), "companies": added}
 
 
 @DBOS.step()

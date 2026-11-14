@@ -7,7 +7,29 @@ from typing import Any
 
 import httpx
 
-from .base import LLMError, LLMRequest, LLMResponse
+from .base import LLMError, LLMMessage, LLMRequest, LLMResponse
+
+# Anthropic models cache only where asked (cache_control breakpoints); OpenAI/Gemini cache prefixes
+# automatically, so for them plain text with the stable part first is enough.
+_EXPLICIT_CACHE = ("anthropic/",)
+_MIN_CACHE_CHARS = 4000  # ~1k tokens: below the providers' minimum cacheable size it is pointless
+
+
+def _message(m: LLMMessage, model: str) -> dict[str, Any]:
+    explicit = model.startswith(_EXPLICIT_CACHE)
+    if not explicit:
+        return {"role": m.role, "content": m.full_text()}
+    parts: list[dict[str, Any]] = []
+    if m.cached_prefix:
+        part: dict[str, Any] = {"type": "text", "text": m.cached_prefix}
+        if len(m.cached_prefix) >= _MIN_CACHE_CHARS:
+            part["cache_control"] = {"type": "ephemeral"}
+        parts.append(part)
+    if m.role == "system" and len(m.content) >= _MIN_CACHE_CHARS:
+        parts.append({"type": "text", "text": m.content, "cache_control": {"type": "ephemeral"}})
+    elif m.content:
+        parts.append({"type": "text", "text": m.content})
+    return {"role": m.role, "content": parts}
 
 
 class OpenRouterProvider:
@@ -24,7 +46,7 @@ class OpenRouterProvider:
     def complete(self, request: LLMRequest, model: str) -> LLMResponse:
         body: dict[str, Any] = {
             "model": model,
-            "messages": [m.model_dump() for m in request.messages],
+            "messages": [_message(m, model) for m in request.messages],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "usage": {"include": True},
@@ -56,7 +78,8 @@ class OpenRouterProvider:
             output_tokens=int(usage.get("completion_tokens") or 0),
             cost_usd=float(usage.get("cost") or 0.0),
             latency_ms=int((time.monotonic() - started) * 1000),
-            raw={"id": data.get("id"), "finish_reason": choice.get("finish_reason")},
+            raw={"id": data.get("id"), "finish_reason": choice.get("finish_reason"),
+                 "cached_tokens": int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)},
         )
 
     def _post(self, body: dict[str, Any]) -> dict[str, Any]:

@@ -141,8 +141,26 @@ def _doc(kind: str) -> Getter:
     return get
 
 
+_PRIOR_EMPLOYER = re.compile(r"\b(work(ed|ing)?|employed|been employed|contract(ed|or))\b.{0,40}\b(for|at|by|with)\b", re.I)
+
+
+def _prior_employer(ctx: Ctx, f: FormField) -> tuple[object, str] | None:
+    """"Have you (ever/previously) worked for <this company>?" answered from the work history."""
+    from rapidfuzz import fuzz
+
+    company = (ctx.company or "").strip()
+    label = f.label.lower()
+    if not company or not (company.lower() in label or re.search(r"\b(us|our company|this company)\b", label)):
+        return None
+    if re.search(r"\b(relative|family|friend|referr|government|competitor)", label):
+        return None  # a different question that happens to mention working somewhere
+    match = next((w for w in _p(ctx).work if fuzz.token_set_ratio(w.company.lower(), company.lower()) >= 90), None)
+    return ("Yes", f"work.{match.id}") if match else ("No", "work")
+
+
 # (label regex, allowed field types or None, getter). First match wins; order matters.
 RULES: list[tuple[re.Pattern[str], set[FieldType] | None, Getter]] = [
+    (_PRIOR_EMPLOYER, {FieldType.select, FieldType.radio, FieldType.combobox}, _prior_employer),
     (re.compile(r"^(legal )?first name|^given name|^first$", re.I), None, _basic("first_name")),
     (re.compile(r"^(legal )?last name|^surname|^family name|^last$", re.I), None, _basic("last_name")),
     (re.compile(r"^legal (first and last |full )?name|^full legal name|^name \(as (on|in) (your )?(passport|id)\)", re.I),
@@ -179,8 +197,19 @@ CONSENT = re.compile(r"(i (acknowledge|agree|consent|confirm|certify|have read|h
                      r"terms (and|&) conditions|by (submitting|checking))", re.I)
 
 
+_ASKY = re.compile(r"^(what('?s| is) (your|the best)|your|please (enter|provide|share) your|enter your|kindly (enter|provide) "
+                   r"your)\s+", re.I)
+
+
+def plain_label(label: str) -> str:
+    """'What is your First Name?' → 'First Name' (Google Forms & co. phrase fields as questions)."""
+    out = _ASKY.sub("", label.strip()).rstrip("?:*. ").strip()
+    out = re.sub(r"\s+to reach you( with| at| on)?$", "", out, flags=re.I)
+    return out or label.strip()
+
+
 def map_field(ctx: Ctx, f: FormField) -> FillValue | None:
-    label = f.label.strip()
+    label = plain_label(f.label)
     for pattern, types, getter in RULES:
         if pattern.search(label) and (types is None or f.type in types):
             got = getter(ctx, f)

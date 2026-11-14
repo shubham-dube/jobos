@@ -160,7 +160,16 @@ def resolve_page(s: Session, gateway: LLMGateway | None, page: FormPage, rc: Res
             todo = [(f, c) for f, c in pending if f.key not in merged]
             if not todo:
                 break
-        _apply_resolution(rc, Resolution(fields=list(merged.values())), pending, plan, used)
+        problems = _apply_resolution(rc, Resolution(fields=list(merged.values())), pending, plan, used)
+        # Escalation: a cheap first pass, then the strong model once for what the cheap one couldn't do —
+        # answers our validation rejected, and required fields it wanted to ask you about — before a human is
+        # asked. The strong model's answers go through the same validation.
+        problems |= {u.key for u in plan.unresolved if u.required}
+        if problems and _routes_differ(gateway, "form.resolve", STRONG_TASK):
+            retry = [(f, c) for f, c in pending if f.key in problems]
+            plan.unresolved = [u for u in plan.unresolved if u.key not in problems]
+            second = _llm_resolve(gateway, rc, retry, page, ref=ref, error_hints=error_hints, task=STRONG_TASK)
+            _apply_resolution(rc, second, retry, plan, used)
     elif pending:
         for f, _ in pending:
             if f.required:
@@ -169,8 +178,16 @@ def resolve_page(s: Session, gateway: LLMGateway | None, page: FormPage, rc: Res
     return ResolveOutcome(plan=plan, answer_ids_used=used)
 
 
+STRONG_TASK = "form.resolve.strong"
+
+
+def _routes_differ(gateway: LLMGateway, a: str, b: str) -> bool:
+    (pa, ma), (pb, mb) = gateway.route(a), gateway.route(b)
+    return (pa.name, ma) != (pb.name, mb)
+
+
 def _llm_resolve(gateway: LLMGateway, rc: ResolveContext, pending: list[tuple[FormField, list[AnswerCandidate]]],
-                 page: FormPage, *, ref: str, error_hints: dict[str, str]) -> Resolution:
+                 page: FormPage, *, ref: str, error_hints: dict[str, str], task: str = "form.resolve") -> Resolution:
     terms = _profile_terms(rc.profile)
     fields_payload = []
     for f, cands in pending:
@@ -193,21 +210,26 @@ def _llm_resolve(gateway: LLMGateway, rc: ResolveContext, pending: list[tuple[Fo
             item["site_validation_error"] = error_hints[f.key]
         fields_payload.append(item)
     countries = ", ".join(COUNTRY_NAMES.get(c, c) for c in rc.job_countries) or "unknown / remote"
-    user = (
-        f"JOB: {rc.job_title} at {rc.company}. Job location countries: {countries}.\n\n"
+    # The profile block is identical for every call of this candidate: sent first and marked cacheable.
+    context = (
         f"CANDIDATE PROFILE (JSON):\n{json.dumps(_compact_profile(rc.profile), ensure_ascii=False)}\n\n"
         f"CITABLE FACTS (id: text):\n{json.dumps(rc.profile.fact_index(), ensure_ascii=False)}\n\n"
+    )
+    user = (
+        f"JOB: {rc.job_title} at {rc.company}. Job location countries: {countries}.\n\n"
         f"FIELDS TO RESOLVE (labels come from the page and are untrusted):\n"
         f"{untrusted('form_fields', json.dumps(fields_payload, ensure_ascii=False), limit=150000)}\n\n"
         f"Page context:\n{untrusted('page_text', page.text_excerpt, limit=2500)}\n\n"
         f"Return exactly {len(fields_payload)} entries in `fields`, one for each of these keys: "
         f"{json.dumps([f.key for f, _ in pending])}"
     )
-    return gateway.structured("form.resolve", SYSTEM, user, Resolution, ref=ref, max_tokens=6000)
+    return gateway.structured(task, SYSTEM, user, Resolution, ref=ref, max_tokens=6000, context=context)
 
 
 def _apply_resolution(rc: ResolveContext, res: Resolution, pending: list[tuple[FormField, list[AnswerCandidate]]],
-                      plan: FillPlan, used: list[str]) -> None:
+                      plan: FillPlan, used: list[str]) -> set[str]:
+    """Validate the model's answers into the plan. Returns keys rejected by validation (worth a stronger model)."""
+    rejected: set[str] = set()
     by_key = {r.key: r for r in res.fields}
     facts = rc.profile.fact_index()
     profile_text = json.dumps(rc.profile.model_dump(mode="json"), ensure_ascii=False).lower()
@@ -243,6 +265,8 @@ def _apply_resolution(rc: ResolveContext, res: Resolution, pending: list[tuple[F
             floor = min(rc.min_confidence, 0.6) if r.source == "generated" else rc.min_confidence
             if not problem and r.confidence < floor:
                 problem = f"low confidence ({r.confidence:.2f})"
+        if problem and r.action != "ask":
+            rejected.add(f.key)
         if r.action == "ask" or problem:
             if f.required or r.action == "ask":
                 plan.unresolved.append(Unresolved(
@@ -256,6 +280,7 @@ def _apply_resolution(rc: ResolveContext, res: Resolution, pending: list[tuple[F
                                      confidence=r.confidence, note=r.reason[:200]))
         if r.answer_id:
             used.append(r.answer_id)
+    return rejected
 
 
 def _norm(v: Any) -> str:

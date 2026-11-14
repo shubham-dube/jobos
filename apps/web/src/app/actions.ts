@@ -30,8 +30,9 @@ export async function feedbackJob(form: FormData) {
 }
 
 export async function importJobUrl(form: FormData) {
-  await api("/api/v1/jobs/import-url", { method: "POST", json: { url: str(form, "url") } });
+  const out = await api<{ job_id?: string }>("/api/v1/jobs/import-url", { method: "POST", json: { url: str(form, "url") } });
   revalidatePath("/jobs");
+  if (out.job_id) redirect(`/jobs/${out.job_id}`); // single forms (Google Forms) open straight on the job page
 }
 
 export async function runSearch(form: FormData) {

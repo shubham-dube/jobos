@@ -295,6 +295,14 @@ class PageOps:
             await loc.first.set_input_files(str(path))
             await asyncio.sleep(1.0)
             return
+        if widget == "gforms-choice":
+            await self._gforms_choose(field, value)
+            return
+        if widget == "gforms-listbox":
+            await self._gforms_listbox(field, str(value[0] if isinstance(value, list) else value))
+            return
+        if widget == "gforms-file":
+            raise ValueError("Google Forms uploads go through Google Drive: please attach this file yourself")
         if field.type in (FieldType.radio, FieldType.multiselect) and field.locator.get("kind") in ("group", "aria-radiogroup"):
             wanted = value if isinstance(value, list) else [value]
             for w in wanted:
@@ -348,6 +356,59 @@ class PageOps:
             await self.human.click(target.first)
             self.suggested.add(await loc.get_attribute("data-jobos-key") or "")
             await asyncio.sleep(0.3)
+
+    # ------------------------------------------------------------------ Google Forms
+    _GF_VALUE = ("el => { const v = el.getAttribute('data-value') ?? el.getAttribute('data-answer-value') ?? "
+                 "el.getAttribute('aria-label') ?? ''; return v === '__other_option__' ? 'Other' : v.trim(); }")
+
+    async def _gforms_choose(self, field: FormField, value: Any) -> None:
+        """Radio / checkbox questions: click the options whose data-value matches; leave others as they are."""
+        item = self._loc(field.key).first
+        opts = item.locator("[role=radio], [role=checkbox]")
+        n = await opts.count()
+        values = [await opts.nth(i).evaluate(self._GF_VALUE) for i in range(n)]
+        if field.type == FieldType.checkbox and not isinstance(value, (list, str)):
+            wanted = values[:1] if value else []
+        else:
+            wanted = value if isinstance(value, list) else [value]
+        picked: list[str] = []
+        for w in wanted:
+            target = best_option(str(w), values)
+            if target is None:
+                raise ValueError(f"option {w!r} not found among {values[:8]}")
+            el = opts.nth(values.index(target))
+            if await el.get_attribute("aria-checked") != "true":
+                await self.human.click(el)
+                await asyncio.sleep(0.3)
+            if await el.get_attribute("aria-checked") != "true":
+                raise ValueError(f"could not select {target!r}")
+            picked.append(target)
+        self.chosen[field.key] = picked
+
+    async def _gforms_listbox(self, field: FormField, value: str) -> None:
+        """Dropdown questions: open the listbox, click the matching option in the popup, verify the selection."""
+        item = self._loc(field.key).first
+        box = item.locator("[role=listbox]").first
+        options = [o for o in field.options if o]
+        target = best_option(value, options) if options else value
+        if target is None:
+            raise ValueError(f"option {value!r} not found")
+        await self.human.click(box)
+        await asyncio.sleep(0.6)
+        popup = self.page.locator(f'[role=option][data-value="{target}"]')
+        clicked = False
+        for i in range(await popup.count()):  # Google renders the list twice; click the visible copy
+            if await popup.nth(i).is_visible():
+                await self.human.click(popup.nth(i))
+                clicked = True
+                break
+        if not clicked:
+            raise ValueError(f"option {target!r} not visible in the dropdown")
+        await asyncio.sleep(0.6)
+        selected = await box.locator('[role=option][aria-selected=true]').first.evaluate(self._GF_VALUE)
+        if selected != target:
+            raise ValueError(f"dropdown shows {selected!r}, wanted {target!r}")
+        self.chosen[field.key] = [target]
 
     async def _choose_in_group(self, field: FormField, wanted: str) -> None:
         loc = self._loc(field.key)

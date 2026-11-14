@@ -22,7 +22,7 @@ export default async function Jobs({ searchParams }: { searchParams: Promise<{ s
       <div className="flex flex-wrap items-end justify-between gap-3">
         <h1 className="mb-0">Jobs <span className="text-base font-normal text-slate-500">({data.total})</span></h1>
         <form action={importJobUrl} className="flex gap-2">
-          <input name="url" className="input w-80" placeholder="Paste a Greenhouse / Lever / Ashby job URL" />
+          <input name="url" className="input w-80" placeholder="Paste a job link (Greenhouse, Lever, Ashby, Workday, Google Forms…)" required />
           <button className="btn-secondary">Add</button>
         </form>
       </div>

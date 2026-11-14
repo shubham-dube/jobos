@@ -9,7 +9,7 @@ from typing import Any, Literal
 from dbos import DBOS
 from pydantic import BaseModel
 
-from jobos.llm import get_gateway, untrusted
+from jobos.llm import BudgetExceeded, get_gateway, untrusted
 
 
 class NavDecision(BaseModel):
@@ -51,7 +51,11 @@ def decide_nav_step(ctx: dict[str, Any], observation: dict[str, Any], recipe_nav
             f"Title: {observation.get('title')}\nAlready clicked: {done_labels}\n\n"
             f"Clickable elements:\n{untrusted('elements', json.dumps(listing, ensure_ascii=False), limit=15000)}\n\n"
             f"Page text:\n{untrusted('page_text', observation.get('text_excerpt', ''), limit=2500)}")
-    d = get_gateway().structured("form.navigate", SYSTEM, user, NavDecision, ref=ctx["application_id"], max_tokens=300)
+    try:
+        d = get_gateway().structured("form.navigate", SYSTEM, user, NavDecision, ref=ctx["application_id"],
+                                     max_tokens=300)
+    except BudgetExceeded:
+        return {"kind": "budget", "reason": "daily LLM budget reached"}
     label = next((e["name"] for e in elements if e["index"] == d.index), "") if d.kind == "click" else ""
     if d.kind == "click" and not label:
         return {"kind": "fail", "reason": "model chose an unknown element"}

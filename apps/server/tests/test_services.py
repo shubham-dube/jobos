@@ -120,3 +120,51 @@ def test_detect_more_ats_urls() -> None:
         "workday", "salesforce.wd12.myworkdayjobs.com|salesforce|External_Career_Site")
     assert detect_ats_from_url("https://jobs.smartrecruiters.com/ServiceNow/7440001") == ("smartrecruiters", "ServiceNow")
     assert detect_ats_from_url("https://apply.workable.com/huggingface/j/AB12/") == ("workable", "huggingface")
+
+
+def test_upsert_clamps_oversized_board_values(session) -> None:
+    from jobos.services.discovery import add_company, upsert_jobs
+    from jobos.sources.base import NormalizedJob
+
+    c = add_company(session, "greenhouse", "clamp-test", "Clamp Co")
+    j = NormalizedJob(source="greenhouse", source_job_id="1", company_name="Clamp Co", board_token="clamp-test",
+                      url="https://x", apply_url="https://x", ats="greenhouse", title="Engineer",
+                      employment_type="Full-time, Permanent, With Benefits, Hybrid", remote_type="hybrid")
+    stats = upsert_jobs(session, c, [j])
+    assert stats.new == 1
+
+
+def test_matches_left_unscored_are_scored_on_a_later_run(session) -> None:
+    import uuid as _uuid
+
+    from jobos.db.models import Company, Job, Match, SearchProfile
+    from jobos.llm.fake import FakeProvider
+    from jobos.llm.gateway import LLMGateway
+    from jobos.services.candidates import get_or_create_default_candidate, save_profile
+    from jobos.services.discovery import evaluate_jobs
+    from jobos_common.profile import MasterProfile
+
+    cand = get_or_create_default_candidate(session)
+    save_profile(session, cand.id, MasterProfile.model_validate(
+        __import__("json").loads((__import__("pathlib").Path(__file__).parent / "fixtures/fake_profile.json").read_text())))
+    comp = Company(name="Later Co", normalized_name="later co", ats="greenhouse", board_token=_uuid.uuid4().hex[:8])
+    session.add(comp)
+    session.flush()
+    job = Job(company_id=comp.id, company_name="Later Co", source="greenhouse", source_job_id=_uuid.uuid4().hex,
+              url="https://x", apply_url="https://x", ats="greenhouse", title="Backend Engineer Later",
+              title_norm="backend engineer later", countries=["IN"], remote_type="onsite", fingerprint=_uuid.uuid4().hex,
+              description_text="Python FastAPI " * 40)
+    session.add(job)
+    sp = SearchProfile(candidate_id=cand.id, name="later", filters={"keywords_any": ["Later"], "countries": ["IN"]})
+    session.add(sp)
+    session.flush()
+    evaluate_jobs(session, None, sp)  # no LLM this time: the match stays unscored
+    m = session.query(Match).filter_by(job_id=job.id).one()
+    assert m.status == "new" and m.score is None
+    fake = FakeProvider()
+    fake.on("job.match", lambda req: {"score": 77, "seniority_fit": "good", "reasons": ["fit"], "gaps": [],
+                                      "resume_label": ""})
+    stats = evaluate_jobs(session, LLMGateway({"fake": fake}, default_route="fake:x"), sp)
+    session.flush()
+    session.refresh(m)
+    assert stats.scored >= 1 and m.score == 77 and m.status == "shortlisted"
