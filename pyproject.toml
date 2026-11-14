@@ -1,0 +1,40 @@
+[tool.uv.workspace]
+members = ["packages/common", "apps/server", "apps/runner"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.8",
+  "pyright>=1.1.390",
+  "respx>=0.21",
+]
+
+[tool.uv.sources]
+jobos-common = { workspace = true }
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003", "B008", "SIM105", "SIM108", "RUF012"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jobos", "jobos_common", "jobos_runner"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/common/tests", "apps/server/tests", "apps/runner/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra"
+markers = [
+  "live: hits real external services (LLM / job boards); skipped unless JOBOS_LIVE_TESTS=1",
+  "browser: needs a Chromium browser",
+]
+
+[tool.pyright]
+include = ["packages/common/src", "apps/server/src", "apps/runner/src"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"

@@ -1,0 +1,41 @@
+<!doctype html><html><head><title>Create Account/Sign In</title></head><body>
+<h2>Create Account/Sign In</h2>
+<div id="choices">
+  <button type="button" data-automation-id="GoogleSignInButton" id="g">Sign in with Google</button>
+  <button type="button" data-automation-id="SignInWithEmailButton" id="e">Sign in with email</button>
+</div>
+<form id="login" style="display:none" onsubmit="return false">
+  <label for="em">Email Address</label><input id="em" type="email" data-automation-id="email">
+  <label for="pw">Password</label><input id="pw" type="password" data-automation-id="password">
+  <button type="button" data-automation-id="signInSubmitButton" id="signin">Sign In</button>
+  <button type="button" data-automation-id="createAccountLink" id="toCreate">Create Account</button>
+  <div role="alert" id="lerr"></div>
+</form>
+<form id="create" style="display:none" onsubmit="return false">
+  <label for="cem">Email Address</label><input id="cem" type="email" data-automation-id="email">
+  <label for="cpw">Password</label><input id="cpw" type="password" data-automation-id="password">
+  <label for="cpw2">Verify New Password</label><input id="cpw2" type="password" data-automation-id="verifyPassword">
+  <label><input type="checkbox" id="agree" data-automation-id="createAccountCheckbox"> I agree to the terms</label>
+  <button type="button" data-automation-id="createAccountSubmitButton" id="doCreate">Create Account</button>
+  <div role="alert" id="cerr"></div>
+</form>
+<script>
+const go = () => { location.href = "apply1.html"; };
+const show = (id) => { ["choices","login","create"].forEach(x => document.getElementById(x).style.display = x === id ? "block" : "none"); };
+document.getElementById("g").onclick = () => { window.open("google.html", "google", "width=480,height=600"); };
+window.addEventListener("message", (ev) => { if (ev.data && ev.data.ok) { localStorage.setItem("acct_google", ev.data.email); go(); } });
+document.getElementById("e").onclick = () => show("login");
+document.getElementById("toCreate").onclick = () => show("create");
+document.getElementById("signin").onclick = () => {
+  const accts = JSON.parse(localStorage.getItem("accts") || "{}");
+  if (accts[em.value] && accts[em.value] === pw.value) go(); else lerr.textContent = "Wrong email or password";
+};
+document.getElementById("doCreate").onclick = () => {
+  const p = cpw.value;
+  if (p !== cpw2.value) return cerr.textContent = "Passwords do not match";
+  if (!(p.length >= 8 && /[A-Z]/.test(p) && /[a-z]/.test(p) && /\d/.test(p) && /[^A-Za-z0-9]/.test(p))) return cerr.textContent = "Password too weak";
+  if (!agree.checked) return cerr.textContent = "You must agree";
+  const accts = JSON.parse(localStorage.getItem("accts") || "{}"); accts[cem.value] = p; localStorage.setItem("accts", JSON.stringify(accts));
+  go();
+};
+</script></body></html>

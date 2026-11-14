@@ -1,0 +1,41 @@
+# Local infrastructure. The API/worker run natively (or via `docker compose --profile app up`).
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: jobos
+      POSTGRES_PASSWORD: jobos
+      POSTGRES_DB: jobos
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobos"]
+      interval: 5s
+      retries: 10
+
+  server:
+    profiles: [app]
+    build: { context: ., dockerfile: infra/docker/server.Dockerfile }
+    env_file: .env
+    environment:
+      JOBOS_DATABASE_URL: postgresql+psycopg://jobos:jobos@postgres:5432/jobos
+      JOBOS_DATA_DIR: /data
+    command: ["sh", "-c", "jobos migrate && jobos serve --host 0.0.0.0 --port 8000 --role all"]
+    ports: ["8000:8000"]
+    volumes: [jobosdata:/data]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  web:
+    profiles: [app]
+    build: { context: apps/web, dockerfile: Dockerfile }
+    environment:
+      JOBOS_API_URL: http://server:8000
+      JOBOS_API_TOKEN: ${JOBOS_API_TOKEN}
+      JOBOS_WEB_PASSWORD: ${JOBOS_WEB_PASSWORD}
+    ports: ["3000:3000"]
+    depends_on: [server]
+
+volumes:
+  pgdata:
+  jobosdata:

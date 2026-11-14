@@ -1,6 +1,6 @@
 # Architecture overview
 
-Status: In review. Depends on ADR-0002 (stack), 0003 (Temporal), 0004 (runners), 0005 (form engine).
+Status: In review. Depends on ADR-0002 (stack), 0010 (DBOS), 0004 (runners), 0005 (form engine), 0011 (LLM providers).
 
 ## 1. System context
 
@@ -11,9 +11,9 @@ flowchart LR
   WEB --> API[API<br/>FastAPI]
   API --> DB[(Postgres + pgvector)]
   API --> OBJ[(Object storage<br/>S3/R2)]
-  API --> TEMP[Temporal<br/>durable workflows]
+  API --> TEMP[DBOS on Postgres<br/>durable workflows]
   TEMP --> WK[Workers<br/>discovery · verify · match · tailor · apply-orchestration · inbox]
-  WK --> LLM[packages/llm<br/>Claude API]
+  WK --> LLM[jobos.llm<br/>OpenRouter / providers]
   WK --> SRC[Job sources<br/>ATS APIs · JobSpy · email alerts]
   WK <-->|task protocol| RUN_L[Local runner<br/>user's computer<br/>real Chrome profile]
   WK <-->|task protocol| RUN_C[Cloud runner P3<br/>containerized Chrome<br/>persistent profile + proxy]
@@ -29,17 +29,17 @@ flowchart LR
 |---|---|---|
 | **Dashboard (`apps/web`)** | All UI: pipeline, feed, interventions, profile, answer bank, connections, settings, analytics | Next.js (App Router), TS, Tailwind, shadcn/ui, TanStack Query, generated API client |
 | **API (`apps/api`)** | Auth, CRUD, commands (start search, answer intervention), runner registration, webhooks, SSE/WebSocket for live updates | FastAPI, Pydantic v2, SQLAlchemy 2 |
-| **Workers (`apps/worker`)** | Temporal workflows + activities for every pipeline stage | Temporal Python SDK |
+| **Workers (`jobos.workflows`)** | DBOS workflows + steps for every pipeline stage (same `jobos` package, `--role worker`) | DBOS Transact |
 | **Runner (`apps/runner`)** | Executes browser tasks: login checks, form extraction, filling, submit, evidence capture. Talks to control plane over an outbound authenticated channel | Python, Playwright, real Chrome |
-| **Form engine (`packages/form-engine`)** | Extract → resolve → gate → fill → verify → submit; ATS detection | Python |
-| **ATS adapters (`packages/ats-adapters`)** | Deterministic per-ATS flows (Greenhouse, Lever, Ashby, Workday, …) | Python + Playwright |
-| **Sources (`packages/sources`)** | Discovery connectors, normalization, dedup, ATS resolution | Python, httpx, JobSpy |
-| **LLM gateway (`packages/llm`)** | Single entry to Claude: prompts, model routing, caching, budgets, structured outputs, tracing | Anthropic Python SDK, Langfuse |
-| **Core (`packages/core`)** | Domain models, state machines, policies, schemas shared by api/worker/runner | Python, Pydantic |
+| **Form engine** | Brain in `jobos.forms` (taxonomy, answer bank, resolver, gate, recipes); hands in `jobos_runner` (`js/extract.js`, `page_ops.py`) | Python + JS |
+| **Site knowledge** | Generic extractor verified on Greenhouse/Lever; learned site recipes (ADR-0014); coded adapters only where generic fails | Python + Playwright |
+| **Sources (`jobos.sources`)** | Discovery connectors, normalization, dedup, ATS resolution | Python, httpx, JobSpy |
+| **LLM gateway (`jobos.llm`)** | Single entry for all LLM calls: provider plug-ins, per-task routing, structured outputs, budget, cost ledger | httpx (OpenRouter), pluggable |
+| **Common (`packages/common` → `jobos_common`)** | Models shared by server and runner: master profile, FormPage/FillPlan, runner protocol | Python, Pydantic |
 | **Notifier** | Web push, Telegram bot, email digests | Worker activities + bot webhook in API |
 | **Postgres** | System of record; pgvector for answer-bank & job embeddings | Postgres 16+ |
 | **Object storage** | Resumes, rendered PDFs, screenshots, evidence bundles | S3-compatible |
-| **Temporal** | Durable execution, retries, timers, signals (human answers), schedules | Temporal Cloud or self-hosted |
+| **DBOS** | Durable workflows, retries, durable sleep, send/recv (human answers, runner results), partitioned queues, schedules | Library on our Postgres |
 
 ## 3. The pipeline (end to end)
 
@@ -61,7 +61,7 @@ flowchart LR
   L --> M[Track via inbox<br/>status updates]
 ```
 
-Each arrow is a Temporal activity or child workflow. Every stage is idempotent and keyed by stable IDs, so retries never duplicate an application.
+Each arrow is a DBOS step or workflow. Every stage is idempotent and keyed by stable IDs, so retries never duplicate an application.
 
 ## 4. Key architectural decisions (see ADRs)
 1. **Control plane in the cloud, execution plane wherever the browser is.** The runner pulls tasks over an outbound connection, so a laptop behind NAT works and the same protocol serves cloud runners later (ADR-0004).
@@ -73,9 +73,9 @@ Each arrow is a Temporal activity or child workflow. Every stage is idempotent a
 
 ## 5. Deployment views
 
-**P1 (founder):** Docker Compose on the founder's machine or one small VM: Postgres, Temporal (dev server), API, worker, web; runner runs natively on the laptop with real Chrome.
+**P1 (founder):** Postgres (Docker or native) + `jobos serve --role all` + `pnpm start` for the dashboard on the founder's Windows machine; runner runs natively with real Chrome. See docs/engineering/runbook-local.md.
 
-**P3 (product):** managed Postgres (with PITR), Temporal Cloud, containerized API/worker/web on a container platform (decision Q7), object storage, CDN for web, cloud runners as autoscaled container pool with per-user persistent profiles, secrets in cloud KMS.
+**P3 (product):** managed Postgres (with PITR), containerized API/worker/web on a container platform (decision Q7), object storage, CDN for web, cloud runners as autoscaled container pool with per-user persistent profiles, secrets in cloud KMS.
 
 ## 6. Related docs
 - [agents-and-workflows.md](agents-and-workflows.md)

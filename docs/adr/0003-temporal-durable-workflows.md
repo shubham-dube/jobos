@@ -1,6 +1,6 @@
 # ADR-0003: Temporal for durable workflows and human-in-the-loop
 
-- Status: Proposed
+- Status: Superseded by ADR-0010
 - Date: 2026-11-12
 - Related: agents-and-workflows.md, FR-HITL-5, NFR-2
 

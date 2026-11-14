@@ -4,7 +4,24 @@ Status: In review
 
 ## 1. Philosophy: "agentic where it pays, deterministic everywhere else"
 
-"Agents" in JobOS are **bounded specialists** inside durable workflows — not one free-roaming agent. Each has a narrow job, typed inputs/outputs (structured outputs), a token/step budget, and a fixed tool set. Orchestration (what happens next, retries, waiting for humans) is code in Temporal, not LLM decisions. This gives us reproducibility, testability, cost control, and safety.
+"Agents" in JobOS are **bounded specialists** inside durable workflows — not one free-roaming agent. Each has a narrow job, typed inputs/outputs (structured outputs), a token/step budget, and a fixed tool set. Orchestration (what happens next, retries, waiting for humans) is code in DBOS, not LLM decisions. This gives us reproducibility, testability, cost control, and safety.
+
+## 1a. Is this a multi-agent system? Where exactly are agents used?
+
+Yes — an **orchestrated** multi-agent system. Specialist agents do the parts that need judgment; durable DBOS workflows (ADR-0010) are the "manager" that decides what runs next, retries, paces, and waits for you. Agents never talk to each other directly — they exchange typed data through the workflow. This is the pattern that holds up at thousands of applications: every hand-off is checkpointed, cheap steps stay deterministic, and you can see exactly which agent did what.
+
+| Pipeline stage | Agent(s) | Uses a browser? | Uses an LLM? |
+|---|---|---|---|
+| Understand you | Profile Builder | no | yes |
+| Find jobs | Scout (connectors) + Resolver | only for career pages with no API | rarely |
+| Is it real / does it fit / am I eligible (visa, location) | Verifier, Matcher | liveness check only | yes |
+| Prepare documents | Tailor | no | yes |
+| Reach the form on unknown sites | **Navigator** | **yes (runner)** | yes |
+| Understand + answer the form | Form Resolver (+ answer bank) | reads the page via runner | yes |
+| Type, select, upload, submit | Runner executor + adapters/recipes | **yes** | no (deterministic, human-like) |
+| Learn the site for next time | Recipe Learner (ADR-0014) | no | no |
+| Read replies, OTPs, interview invites | Inbox Clerk — via IMAP, or **webmail in the runner's browser** when no connection is possible | optional | yes |
+| Quality check before submit | Reviewer | no | yes |
 
 ## 2. The agent roster
 
@@ -23,11 +40,11 @@ Status: In review
 
 Default model: `claude-opus-5-5` for all LLM agents. Per-agent model/effort routing to Sonnet 5.5 / Haiku 5.5 only after evals show no quality loss and with founder approval (DECISIONS-NEEDED Q9). All calls go through `packages/llm`.
 
-## 3. Workflows (Temporal)
+## 3. Workflows (DBOS)
 
 | Workflow | Trigger | Shape |
 |---|---|---|
-| `DiscoveryWorkflow(search_profile_id)` | Temporal Schedule (e.g. every 6h) / manual | fan-out per source → normalize → dedup/resolve → verify → match → enqueue shortlisted |
+| `DiscoveryWorkflow(search_profile_id)` | DBOS Schedule (e.g. every 6h) / manual | fan-out per source → normalize → dedup/resolve → verify → match → enqueue shortlisted |
 | `ApplicationWorkflow(application_id)` | Shortlisted job passes policy | prepare → acquire runner lease → page loop → gate → submit → evidence → done; waits on signals for interventions |
 | `InterventionWorkflow` (child) | Any pause | notify → wait for `answer` signal or timeout → reminders → return |
 | `InboxSyncWorkflow(mailbox_id)` | Push/poll | fetch new → classify → link → update application state → notify |
@@ -38,7 +55,7 @@ Default model: `claude-opus-5-5` for all LLM agents. Per-agent model/effort rout
 ### Determinism rules
 - Workflows contain only orchestration; all I/O (DB, HTTP, LLM, browser) happens in activities.
 - Activity idempotency keys: `application_id + attempt + step`.
-- Long waits use Temporal timers/signals (no polling loops).
+- Long waits use DBOS timers/signals (no polling loops).
 
 ## 4. Application state machine
 

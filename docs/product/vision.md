@@ -37,7 +37,7 @@ JobOS is an autopilot that:
 
 ## 4. Product principles (in priority order)
 
-1. **Trust over volume.** Default to quality: match thresholds, daily caps, review gates. A wrong application is worse than none.
+1. **Volume *with* quality.** The system is built to apply to thousands of well-matched jobs, but only after match/eligibility/legitimacy checks, with human-like pacing per employer and review gates the user loosens over time (ADR-0015). A wrong application is worse than none.
 2. **Never fabricate.** Every submitted value traces to a source the user owns. Unknown → ask.
 3. **The user's real identity, the user's real browser.** Apply as the user would: their accounts, their device (or a dedicated, persistent profile), human pacing.
 4. **Ask once, remember forever.** Every intervention makes the system more autonomous next time.

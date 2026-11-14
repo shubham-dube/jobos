@@ -1,6 +1,6 @@
 # ADR-0007: Email integration path
 
-- Status: Proposed — needs founder decision (DECISIONS-NEEDED Q6)
+- Status: Accepted with amendment (2026-11-13): founder uses Gmail + Zoho Mail. Implementation order: IMAP with app passwords (both providers) → runner-driven webmail fallback → Gmail API (founder testing mode)
 - Date: 2026-11-12
 - Related: FR-MAIL-*, FR-ACC-3, risk R6
 

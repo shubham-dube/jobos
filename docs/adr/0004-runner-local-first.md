@@ -1,6 +1,6 @@
 # ADR-0004: Local-first runner; cloud runner later; shared runner protocol
 
-- Status: Proposed — needs founder decision (DECISIONS-NEEDED Q3)
+- Status: Accepted (2026-11-13) — founder machine is Windows
 - Date: 2026-11-12
 - Related: browser-execution.md, FR-HITL-4, FR-PLAT-2
 

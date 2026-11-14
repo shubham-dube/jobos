@@ -1,6 +1,6 @@
 # ADR-0009: Dependency licensing policy
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-12
 
 ## Context

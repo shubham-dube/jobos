@@ -2,42 +2,32 @@
 
 Status: In review
 
-## 1. Layout
+## 1. Layout (as built)
 
 ```
 jobos/
-├─ AGENTS.md / CLAUDE.md          # standing rules for coding agents
-├─ justfile                       # unified commands: just dev, just test, just lint, just e2e
-├─ docker-compose.yml             # postgres, temporal (dev), minio, api, worker, web, langfuse (optional)
-├─ .env.example
-├─ apps/
-│  ├─ web/                        # Next.js dashboard
-│  ├─ api/                        # FastAPI service (+ Telegram webhook, runner gateway)
-│  ├─ worker/                     # Temporal workers (workflows + activities)
-│  └─ runner/                     # local runner (Playwright + Chrome), later desktop shell
-├─ packages/
-│  ├─ core/                       # domain models, state machine, policies, schemas
-│  ├─ llm/                        # Claude client wrapper, prompts, routing, budgets, tracing
-│  ├─ form-engine/                # extract/resolve/gate/fill/verify, generic extractor, navigator
-│  ├─ ats-adapters/               # greenhouse/, lever/, ashby/, workday/, google_forms/ …
-│  ├─ sources/                    # discovery connectors, normalization, dedup, resolution
-│  └─ ts-client/                  # generated OpenAPI client for web
-├─ tests/
-│  ├─ fixtures/forms/<ats>/<case>/  # saved HTML + golden schema/plan
-│  ├─ fake-ats/                     # local server replaying multi-page ATS flows
-│  ├─ evals/                        # LLM eval datasets + runners
-│  └─ e2e/                          # Playwright tests: dashboard + full apply against fake-ats
-├─ infra/
-│  ├─ docker/                     # Dockerfiles
-│  └─ tofu/                       # IaC (P3)
-├─ docs/
-└─ .github/
-   ├─ workflows/                  # ci.yml, nightly.yml, release.yml, codeql.yml
-   ├─ pull_request_template.md
-   └─ ISSUE_TEMPLATE/
+├─ AGENTS.md / CLAUDE.md            # standing rules for coding agents
+├─ pyproject.toml / uv.lock         # uv workspace (packages/common, apps/server, apps/runner)
+├─ justfile · docker-compose.yml · .env.example
+├─ packages/common/                 # jobos_common: MasterProfile, FormPage/FillPlan, runner protocol v1
+├─ apps/server/                     # jobos: API + workflows + agents (one package, roles api|worker|all)
+│  └─ src/jobos/
+│     ├─ api/          dashboard.py, runner.py (protocol), webhooks.py (WhatsApp), app.py
+│     ├─ workflows/    application.py, discovery.py, inbox.py, navigator.py, primitives.py, runtime.py (DBOS)
+│     ├─ forms/        taxonomy.py, answer_bank.py, resolver.py, gate.py, recipes.py
+│     ├─ matching/     geo.py, rules.py (filters/eligibility/legitimacy), scorer.py (LLM)
+│     ├─ sources/      ats.py (Greenhouse/Lever/Ashby), base.py, seed_companies.json
+│     ├─ services/     applications, candidates, discovery, inbox (IMAP), interventions, runner_gateway, storage, secrets
+│     ├─ llm/          gateway.py (routing/budget/ledger), openrouter.py, fake.py
+│     ├─ notify/       WhatsApp Cloud API + Resend
+│     └─ db/           models.py, migrations/ (Alembic)
+│  └─ tests/          unit + e2e (fake ATS fixture in tests/fixtures/fake_ats)
+├─ apps/runner/                     # jobos_runner: installs on the user's PC (Windows), drives real Chrome
+│  └─ src/jobos_runner/  agent.py (long-poll loop), page_ops.py, js/extract.js, human.py, browser.py, cli.py
+├─ apps/web/                        # Next.js dashboard (server components; API token stays server-side)
+├─ infra/docker/                    # server image
+└─ docs/
 ```
-
-Python: one `uv` workspace (root `pyproject.toml` with members). TS: `pnpm` workspace for `apps/web`, `packages/ts-client`.
 
 ## 2. CI (GitHub Actions)
 

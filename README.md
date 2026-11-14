@@ -2,7 +2,15 @@
 
 > An autopilot for the job search: agents that **find** real jobs that fit you, **verify** they are legitimate, **apply** through a real browser using your own logged-in accounts, **track** every reply in your inbox, and **stop and ask you** whenever they are missing information.
 
-Status: **Phase 0 — documentation and decisions.** No product code yet. Start with [`docs/README.md`](docs/README.md).
+Status: **Phase 1 — founder MVP working end to end** (see [spec 0001](docs/specs/0001-core-pipeline/spec.md)).
+Run it on your machine: [`docs/engineering/runbook-local.md`](docs/engineering/runbook-local.md).
+
+**What works today:** discovery across 111+ employer job boards (Greenhouse, Lever, Ashby) with visa/eligibility
+checks for your citizenship, legitimacy scoring and AI fit scores · applying through your own Chrome via a local
+runner (generic form engine, verified on live Greenhouse and Lever forms) · asks you only what it can't prove from
+your profile, and remembers the answer · review-by-default with your own auto-approval rules · durable workflows
+(DBOS on Postgres) · evidence for every application · Gmail/Zoho tracking via IMAP · WhatsApp + email notifications ·
+Next.js dashboard.
 
 ## Why this exists
 
@@ -20,13 +28,18 @@ JobOS takes the opposite position: **fewer, better, verified applications**, sub
 | See what we build first | [`docs/plan/roadmap.md`](docs/plan/roadmap.md) |
 | Know how we work (branches, specs, CI) | [`docs/engineering/how-we-work.md`](docs/engineering/how-we-work.md) |
 
-## Repository layout (planned)
+## Repository layout
 
 ```
-apps/        web (dashboard), api, worker (workflows), runner (browser executor)
-packages/    shared Python/TS libraries: core domain, form engine, ATS adapters, sources, llm
-infra/       docker, IaC
-docs/        product, research, architecture, ADRs, specs, plans
+packages/common   shared models (profile, forms, runner protocol)
+apps/server       API + agents + durable workflows (Python, FastAPI, DBOS)
+apps/runner       local browser runner (Python, Playwright, your real Chrome)
+apps/web          dashboard (Next.js)
+docs/             product, research, architecture, ADRs, specs, runbooks
+```
+
+```bash
+just bootstrap && just db && just migrate   # then: just server · just web · just runner · just test
 ```
 
 See [`docs/engineering/repo-structure-and-ci.md`](docs/engineering/repo-structure-and-ci.md).
