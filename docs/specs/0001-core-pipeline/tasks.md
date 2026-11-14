@@ -14,6 +14,12 @@
 - [x] Tests: 30 (unit + e2e real browser vs fake multi-page ATS); live dry runs on Greenhouse + Lever
 - [x] Document kinds (transcript / cover letter) + file-upload interventions; validation-blocked submits → failed
 - [x] Application-deadline filter ("Deadline to Apply …"); submit waits up to 60s for slow confirmations
+- [x] Autopilot loop verified e2e (auto_apply → queue → fill → review → bulk approve → submit); rolling daily cap
+- [x] Review queue page + bulk review API
+- [x] Board discovery (130 → 389 employers), resilient crawling, unscored matches re-scored later
+- [x] Google Forms (extract/fill/verify all widget types, sign-in forms, link import)
+- [x] Cost: prompt caching, cheap-first form answering with escalation, deterministic prior-employment answers
+- [x] Resilience: LLM budget pause/resume, crash guard
 - [ ] Founder acceptance (AC11)
 - [x] Tailoring → spec 0002 (grounded resumes + cover letters, Typst, ADR-0018)
 - [ ] Next: Workday beyond sign-in (needs the founder's machine/Google session); aggregator jobs via alert emails

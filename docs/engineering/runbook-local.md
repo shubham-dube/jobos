@@ -91,6 +91,16 @@ employers to the crawl list automatically.
   job → *Tailor resume* to preview first: the document page shows every line, its source, and what was reworded.
   `tailoring.cover_letter`: `never` | `when_required` (default) | `always`. Upload a transcript once in Profile →
   Documents (type *Transcript*) and it is attached wherever a form asks for one.
+- **Review queue** (dashboard → Review): every application waiting for "approve & submit", best match first;
+  rows with no AI-written answers are pre-selected; approve or skip many at once. Each approved application still
+  passes its own submit gate (daily caps, validation) before the click.
+- **Autopilot**: set a search's `auto_apply` to true. Discovery then queues shortlisted jobs (score ≥
+  `thresholds.min_match_score_to_queue`, at most `pacing.daily_cap` per rolling 24h); they fill and wait in Review.
+- **More employers**: `uv run jobos discover-boards` (or `--names-file my_companies.txt`) probes company names for
+  public Greenhouse/Lever/Ashby boards and adds the ones with open jobs to the crawl list.
+- **Google Forms**: paste the form link in Jobs → *Add*; it becomes a job you can apply to. Forms that need a Google
+  sign-in use the Google account signed in to the runner's Chrome. File uploads on Google Forms go through Google
+  Drive and are left to you.
 - To let tailored applications auto-submit, add `"max_tailored_rephrases": 20` (and `"allow_generated_cover_letter":
   true` if wanted) to an approval rule's `when`; otherwise they stay in review.
 
@@ -101,5 +111,6 @@ employers to the crawl list automatically.
 | Application stuck in `needs_input` | answer it in Inbox; the workflow resumes exactly where it stopped |
 | `uncertain` state | submit clicked but no confirmation page; check the screenshot and your email |
 | LLM budget reached | raise `JOBOS_LLM_DAILY_BUDGET_USD` or route bulk tasks to cheaper models |
+| Application shows "llm.budget_wait" | the daily LLM budget is used up; it resumes by itself (or raise the budget) |
 | Tailored resume shows "keyword selection (no LLM)" | the LLM was unavailable/over budget; the resume is your verbatim text, still valid |
 | `failed: form validation blocked submit (not sent)` | a required field the site checks itself (often an upload); answer it and Retry |
